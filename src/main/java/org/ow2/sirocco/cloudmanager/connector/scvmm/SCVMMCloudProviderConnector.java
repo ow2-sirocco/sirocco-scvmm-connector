@@ -1,11 +1,40 @@
 package org.ow2.sirocco.cloudmanager.connector.scvmm;
 
+import java.io.IOException;
+import java.net.URI;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+import org.apache.http.HttpException;
+import org.apache.http.HttpHost;
+import org.apache.http.HttpRequest;
+import org.apache.http.HttpRequestInterceptor;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.AuthState;
+import org.apache.http.auth.Credentials;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.conn.scheme.Scheme;
+import org.apache.http.conn.scheme.SchemeRegistry;
+import org.apache.http.conn.ssl.SSLSocketFactory;
+import org.apache.http.impl.auth.BasicScheme;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.conn.BasicClientConnectionManager;
+import org.apache.http.protocol.ExecutionContext;
+import org.apache.http.protocol.HttpContext;
 import org.ow2.sirocco.cloudmanager.connector.api.ConnectorException;
 import org.ow2.sirocco.cloudmanager.connector.api.ICloudProviderConnector;
 import org.ow2.sirocco.cloudmanager.connector.api.IComputeService;
@@ -15,6 +44,7 @@ import org.ow2.sirocco.cloudmanager.connector.api.ISystemService;
 import org.ow2.sirocco.cloudmanager.connector.api.IVolumeService;
 import org.ow2.sirocco.cloudmanager.connector.api.ProviderTarget;
 import org.ow2.sirocco.cloudmanager.connector.api.ResourceNotFoundException;
+import org.ow2.sirocco.cloudmanager.model.cimi.DiskTemplate;
 import org.ow2.sirocco.cloudmanager.model.cimi.ForwardingGroup;
 import org.ow2.sirocco.cloudmanager.model.cimi.ForwardingGroupCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.ForwardingGroupNetwork;
@@ -22,6 +52,7 @@ import org.ow2.sirocco.cloudmanager.model.cimi.Machine;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineConfiguration;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineImage;
+import org.ow2.sirocco.cloudmanager.model.cimi.MachineTemplateNetworkInterface;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineVolume;
 import org.ow2.sirocco.cloudmanager.model.cimi.Network;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkCreate;
@@ -33,8 +64,32 @@ import org.ow2.sirocco.cloudmanager.model.cimi.VolumeCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.VolumeImage;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderAccount;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderLocation;
+import org.ow2.sirocco.cloudmanager.model.cimi.extension.ProviderMapping;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.msopentech.odatajclient.engine.client.http.HttpClientFactory;
+import com.msopentech.odatajclient.engine.client.http.HttpMethod;
+import com.msopentech.odatajclient.engine.communication.request.UpdateType;
+import com.msopentech.odatajclient.engine.communication.request.cud.ODataCUDRequestFactory;
+import com.msopentech.odatajclient.engine.communication.request.cud.ODataEntityCreateRequest;
+import com.msopentech.odatajclient.engine.communication.request.cud.ODataEntityUpdateRequest;
+import com.msopentech.odatajclient.engine.communication.request.retrieve.ODataEntityRequest;
+import com.msopentech.odatajclient.engine.communication.request.retrieve.ODataEntitySetRequest;
+import com.msopentech.odatajclient.engine.communication.request.retrieve.ODataRetrieveRequestFactory;
+import com.msopentech.odatajclient.engine.communication.response.ODataEntityCreateResponse;
+import com.msopentech.odatajclient.engine.communication.response.ODataEntityUpdateResponse;
+import com.msopentech.odatajclient.engine.communication.response.ODataRetrieveResponse;
+import com.msopentech.odatajclient.engine.data.ODataCollectionValue;
+import com.msopentech.odatajclient.engine.data.ODataComplexValue;
+import com.msopentech.odatajclient.engine.data.ODataEntity;
+import com.msopentech.odatajclient.engine.data.ODataEntitySet;
+import com.msopentech.odatajclient.engine.data.ODataFactory;
+import com.msopentech.odatajclient.engine.data.ODataPrimitiveValue;
+import com.msopentech.odatajclient.engine.data.metadata.edm.EdmSimpleType;
+import com.msopentech.odatajclient.engine.format.ODataPubFormat;
+import com.msopentech.odatajclient.engine.uri.ODataURIBuilder;
+import com.msopentech.odatajclient.engine.utils.Configuration;
 
 public class SCVMMCloudProviderConnector implements ICloudProviderConnector, IComputeService, IVolumeService,
     INetworkService, IImageService {
@@ -309,14 +364,27 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
         return this.getProvider(target).getMachineImages(returnPublicImages, searchCriteria);
     }
 
+    
+    /**
+     * SCVMMProvider
+     *
+     */
     private static class SCVMMProvider {
 
         private CloudProviderAccount cloudProviderAccount;
 
         private CloudProviderLocation cloudProviderLocation;
-
+        
+        private String serviceRootURL;
+        
+        private String stampId;
+        
         public SCVMMProvider(final CloudProviderAccount cloudProviderAccount,
-            final CloudProviderLocation cloudProviderLocation) {
+        		final CloudProviderLocation cloudProviderLocation) {
+        	this.cloudProviderAccount = cloudProviderAccount;
+        	this.cloudProviderLocation = cloudProviderLocation;
+        	this.serviceRootURL = cloudProviderAccount.getCloudProvider().getEndpoint();
+        	Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
         }
 
         //
@@ -324,15 +392,182 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
         //
 
         public List<MachineConfiguration> getMachineConfigs() {
-            // TODO
+        	logger.debug("Getting machine configs...");
+        	
+        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("HardwareProfiles");
+		
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+		
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+		
             List<MachineConfiguration> result = new ArrayList<>();
+            for (ODataEntity entity : entitySet.getEntities()) {
+            	MachineConfiguration machineConfig = new MachineConfiguration();
+            	
+            	// set name
+            	machineConfig.setName(entity.getProperty("Name").getValue()
+            			.toString());
+            	
+            	// set cpu
+            	machineConfig.setCpu(entity.getProperty("CPUCount").getValue()
+            			.asPrimitive().<Integer> toCastValue());
+            	
+            	// set memory
+            	machineConfig.setMemory(entity.getProperty("Memory").getValue()
+            			.asPrimitive().<Integer> toCastValue());
+            	
+            	// set disks
+            	List<DiskTemplate> disks = new ArrayList<>();
+                DiskTemplate disk = new DiskTemplate();
+                if (entity.getProperty("TotalVHDCapacity").hasNullValue()) {
+                	disk.setCapacity(0);
+                } else {
+                	disk.setCapacity(entity.getProperty("TotalVHDCapacity").getValue()
+                			.asPrimitive().<Integer> toCastValue());
+                }
+                disks.add(disk);
+                machineConfig.setDisks(disks);
+                
+            	// set provider mappings
+            	ProviderMapping providerMapping = new ProviderMapping();
+                providerMapping.setProviderAssignedId(
+                		entity.getProperty("ID").getValue().toString());
+                providerMapping.setProviderAccount(this.cloudProviderAccount);
+                machineConfig.setProviderMappings(Collections.singletonList(providerMapping));
+            	
+            	result.add(machineConfig);
+			}
+        	
             return result;
         }
 
+ 
+        /**
+         * Creates a virtual machine with the configuration passed as a parameter
+         * @param machineCreate - virtual machine configuration 
+         * @return the virtual machine created
+         * @throws ConnectorException
+         */
         public Machine createMachine(final MachineCreate machineCreate) throws ConnectorException {
-            // TODO
-            final Machine machine = new Machine();
+        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntitySetSegment("VirtualMachines");
+		
+			ODataEntity machineConfig = ODataFactory.newEntity("VMM.VirtualMachine");
+			
+			// get CloudId and set StampId
+			String cloudId = getCloudIdFromName(
+					cloudProviderAccount.getProperties().get("cloudName"));
+		
+			// add StampId
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
+							.setValue(UUID.fromString(stampId)).build()));
 
+			// add cloud id
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("CloudId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
+							.setValue(UUID.fromString(cloudId)).build()));
+						
+			// add name
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
+					new ODataPrimitiveValue.Builder().setText(machineCreate.getName())
+							.setType(EdmSimpleType.String).build()));
+		
+			// add VMTemplateId
+			ProviderMapping mapping = ProviderMapping.find(
+					machineCreate.getMachineTemplate().getMachineImage(),
+	                cloudProviderAccount, cloudProviderLocation);
+            if (mapping == null) {
+                throw new ConnectorException("Cannot find imageId for image "
+                    + machineCreate.getMachineTemplate().getMachineImage().getName());
+            }
+            String templateId = mapping.getProviderAssignedId();
+//			String templateId = machineCreate.getMachineTemplate()
+//					.getMachineImage().getProviderAssignedId();
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VMTemplateId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
+							.setValue(UUID.fromString(templateId)).build()));
+			
+			// add NewVirtualNetworkAdapterInput
+			ODataCollectionValue collection = new ODataCollectionValue(
+					"Collection(VMM.NewVMVirtualNetworkAdapterInput)");
+
+			if (machineCreate.getMachineTemplate().getNetworkInterfaces() != null) {
+	            for (MachineTemplateNetworkInterface nic : 
+	            		machineCreate.getMachineTemplate().getNetworkInterfaces()) {
+	            	
+	    			ODataComplexValue nicOData = 
+	    					new ODataComplexValue("NewVMVirtualNetworkAdapterInput");
+	    			
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("VMNetworkName",
+	    					new ODataPrimitiveValue.Builder()
+	    							.setText(getNetworkNameFromId(nic.getNetwork().getProviderAssignedId()))
+	    							.setType(EdmSimpleType.String).build()));
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType", null));
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("IPv6AddressType", null));
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress", null));
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType", null));
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("VLanEnabled", null));
+	    			nicOData.add(ODataFactory.newPrimitiveProperty("VLanId", null));
+	    			
+	    			collection.add(nicOData);
+	            }
+	        }
+			
+			machineConfig.addProperty(ODataFactory.newCollectionProperty(
+					"NewVirtualNetworkAdapterInput", collection));
+			
+			// add owner
+			ODataComplexValue owner = new ODataComplexValue("VMM.UserAndRole");
+			
+			/// set user name
+			owner.add(ODataFactory.newPrimitiveProperty("UserName",
+					new ODataPrimitiveValue.Builder()
+							.setText(cloudProviderAccount.getLogin())
+							.setType(EdmSimpleType.String).build()));
+			
+			/// set role name
+			String tenantName = cloudProviderAccount.getProperties().get("tenantName");
+			owner.add(ODataFactory.newPrimitiveProperty("RoleName",
+					new ODataPrimitiveValue.Builder().setText(tenantName)
+							.setType(EdmSimpleType.String).build()));
+
+			/// set role id
+			owner.add(ODataFactory.newPrimitiveProperty("RoleID",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
+							.setValue(UUID.fromString(
+									tenantName.substring(tenantName.length()-36)))
+							.build()));
+			
+			machineConfig.addProperty(ODataFactory.newComplexProperty("Owner", owner));
+			
+			// create and execute request			
+			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
+					.getEntityCreateRequest(uriBuilder.build(), machineConfig);
+			createReq.setFormat(ODataPubFormat.ATOM);
+			
+			final ODataEntityCreateResponse createRes = createReq.execute();
+
+			// response processing
+			if (createRes.getStatusCode() != 201) {
+				logger.error("Machine creation failed: " + createRes.getStatusMessage());
+				throw new ConnectorException(
+						"Machine creation failed: " + createRes.getStatusMessage());
+			}
+
+			machineConfig = createRes.getBody();
+			
+			logger.info("Machine creation succeed (ID=" + machineConfig
+					.getProperty("ID").getValue() + ")");
+			
+			final Machine machine = new Machine();
+			machine.setProviderAssignedId(
+            		machineConfig.getProperty("ID").getValue().toString());
+			
             return machine;
         }
 
@@ -453,6 +688,201 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
             // TODO Auto-generated method stub
             return Collections.emptyList();
         }
-    }
+        
+        
+        //
+        // OData functions
+        //
+        
+        /**
+         * Retrieves cloud identifier with its name and sets attribute StampId if not already set
+         * @param cloudName - cloud identified name
+         * @return cloud identifier depending on the cloud name passed as a parameter
+         */
+        private String getCloudIdFromName(String cloudName) {
+        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("Clouds");
+		
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+		
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entities = res.getBody();
+			
+			for (ODataEntity entity : entities.getEntities()) {
+				if (entity.getProperty("Name").getValue().toString().equals(cloudName)) {
+					// set StampId
+					setStampId(entity.getProperty("StampId").getValue().toString());
+					
+					return entity.getProperty("ID").getValue().toString();
+				}
+			}
+			
+			return null;
+        }
+        
+        /**
+         * Retrieves network name with its identifier and sets attribute StampId if not already set
+         * @param networkId - network identifier
+         * @return network name depending on the network identifier passed as a parameter
+         */
+        private String getNetworkNameFromId(String networkId) {
+        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworks");
+		
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+		
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entities = res.getBody();
+			
+			for (ODataEntity entity : entities.getEntities()) {
+				if (entity.getProperty("ID").getValue().toString().equals(networkId)) {
+					// set StampId
+					setStampId(entity.getProperty("StampId").getValue().toString());
+					
+					return entity.getProperty("Name").getValue().toString();
+				}
+			}
+			
+			return null;
+        }
 
+        private void setStampId(String stampId) {
+        	if (this.stampId == null)
+        		this.stampId = stampId;
+		}
+        
+        private Machine fromODataEntityToMachine(ODataEntity machine) {
+        	Machine machineRes = new Machine();
+        	machineRes.setProviderAssignedId(
+            		machine.getProperty("ID").getValue().toString());
+            machineRes.setName(
+            		machine.getProperty("Name").getValue().toString());
+            machineRes.setState(fromODataStatusToMachineState(
+            		machine.getProperty("Status").getValue().toString()));
+        	
+        	return machineRes;
+        }
+        
+        private Machine.State fromODataStatusToMachineState(String status) {
+        	//TODO add others states
+        	if (status.equals("Running")) {
+				return Machine.State.STARTED;
+				
+			} else if (status.equals("PowerOff")) {
+				return Machine.State.STOPPED;
+				
+			} else if (status.equals("UnderCreation")) {
+        		return Machine.State.CREATING;
+        		
+			} else if (status.equals("Starting")) {
+				return Machine.State.STARTING;
+				
+        	} else if (status.equals("Paused")) {
+				return Machine.State.PAUSED;
+				
+			} else if (status.equals("Saved")) {
+				return Machine.State.SUSPENDED;
+				
+			} else {
+        		return Machine.State.ERROR;
+        	}
+        }
+    
+    
+        /**
+         * SimpleHttpsClientFactory
+         *
+         */
+        private class SimpleHttpsClientFactory implements HttpClientFactory {
+
+    		public HttpClient createHttpClient(final HttpMethod method,
+    				final URI uri) {
+
+    			SSLContext sslContext = null;
+    			try {
+    				sslContext = SSLContext.getInstance("SSL");
+
+    				sslContext.init(null,
+    						new TrustManager[] { new X509TrustManager() {
+    							public X509Certificate[] getAcceptedIssuers() {
+    								return new X509Certificate[] {};
+    							}
+
+    							public void checkClientTrusted(
+    									X509Certificate[] certs, String authType) {
+    							}
+
+    							public void checkServerTrusted(
+    									X509Certificate[] certs, String authType) {
+    							}
+    						} }, new SecureRandom());
+
+    				SSLSocketFactory sf = new SSLSocketFactory(sslContext,
+    						SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+
+    				Scheme httpsScheme = new Scheme("https", 443, sf);
+    				SchemeRegistry schemeRegistry = new SchemeRegistry();
+    				schemeRegistry.register(httpsScheme);
+
+    				BasicClientConnectionManager cm = new BasicClientConnectionManager(
+    						schemeRegistry);
+
+    				DefaultHttpClient httpclient = new DefaultHttpClient(cm);
+
+    				httpclient.getCredentialsProvider().setCredentials(
+    						AuthScope.ANY,
+    						new UsernamePasswordCredentials(
+    								cloudProviderAccount.getLogin(),
+    								cloudProviderAccount.getPassword()));
+    				httpclient.addRequestInterceptor(
+    						new PreemptiveAuthInterceptor(), 0);
+    				return httpclient;
+
+    			} catch (Exception e) {
+    				e.printStackTrace();
+    				return null;
+    			}
+
+    		}
+    	}
+        
+        
+        /**
+         * PreemptiveAuthInterceptor
+         *
+         */
+        private static class PreemptiveAuthInterceptor implements HttpRequestInterceptor {
+
+    		@SuppressWarnings("deprecation")
+    		public void process(final HttpRequest request, final HttpContext context)
+    				throws HttpException, IOException {
+    			AuthState authState = (AuthState) context
+    					.getAttribute(ClientContext.TARGET_AUTH_STATE);
+
+    			// If no auth scheme availalble yet, try to initialize it
+    			// preemptively
+    			if (authState.getAuthScheme() == null) {
+    				CredentialsProvider credsProvider = (CredentialsProvider) context
+    						.getAttribute(ClientContext.CREDS_PROVIDER);
+    				HttpHost targetHost = (HttpHost) context
+    						.getAttribute(ExecutionContext.HTTP_TARGET_HOST);
+    				Credentials creds = credsProvider.getCredentials(new AuthScope(
+    						targetHost.getHostName(), targetHost.getPort()));
+    				if (creds == null)
+    					throw new HttpException(
+    							"No credentials for preemptive authentication");
+    				authState.setAuthScheme(new BasicScheme());
+    				authState.setCredentials(creds);
+    			}
+
+    		}
+
+    	}
+        
+    }
+    
 }
