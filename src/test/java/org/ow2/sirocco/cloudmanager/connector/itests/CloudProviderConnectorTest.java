@@ -64,6 +64,8 @@ import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderAccount;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderLocation;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.ProviderMapping;
 
+import com.msopentech.odatajclient.engine.communication.ODataClientErrorException;
+
 public class CloudProviderConnectorTest {
     private static final String MACHINE_CONFIG_NAME_PROP = "machineconfig.name";
 
@@ -79,7 +81,7 @@ public class CloudProviderConnectorTest {
 
     private static final String LOCATION_COUNTRY_PROP = "location.country";
 
-    private static final int ASYNC_OPERATION_WAIT_TIME_IN_SECONDS = 240;
+    private static final int ASYNC_OPERATION_WAIT_TIME_IN_SECONDS = 300;
     
     //XXX
     private static final String MACHINE_NAME = "testAdrien2";
@@ -170,9 +172,6 @@ public class CloudProviderConnectorTest {
                 accountProperties.put(key, value);
             }
         }
-        
-        //XXX
-        accountProperties.put("cloudName", "OpenCloudware");
 
         CloudProvider cloudProvider = new CloudProvider();
         cloudProvider.setId(4321);
@@ -195,7 +194,7 @@ public class CloudProviderConnectorTest {
                     return machineState;
                 }
             }
-            Thread.sleep(1000);
+            Thread.sleep(5000);
         }
         throw new Exception("Timeout waiting for Machine state transition");
     }
@@ -225,7 +224,7 @@ public class CloudProviderConnectorTest {
         IVolumeService volumeService = this.connector.getVolumeService();
         INetworkService networkService = this.connector.getNetworkService();
         IImageService imageService = this.connector.getImageService();
-        
+       
         // get public network
         //XXX
 //        Network publicNetwork = null;
@@ -264,17 +263,15 @@ public class CloudProviderConnectorTest {
 
         // get images
 
-        //XXX
-//        List<MachineImage> images = imageService.getMachineImages(false, null, target);
-//        for (MachineImage image : images) {
-//            Assert.assertNotNull(image.getName());
-//            Assert.assertTrue(image.getProviderMappings().size() == 1);
-//            ProviderMapping mapping = image.getProviderMappings().get(0);
-//            Assert.assertNotNull(mapping.getProviderAssignedId());
-//        }
-//
-//        String imageId = images.get(0).getProviderMappings().get(0).getProviderAssignedId();
-        String imageId = "023d4234-32b8-48b7-808b-36a43752c741";
+        List<MachineImage> images = imageService.getMachineImages(false, null, target);
+        for (MachineImage image : images) {
+            Assert.assertNotNull(image.getName());
+            Assert.assertTrue(image.getProviderMappings().size() == 1);
+            ProviderMapping mapping = image.getProviderMappings().get(0);
+            Assert.assertNotNull(mapping.getProviderAssignedId());
+        }
+
+        String imageId = images.get(0).getProviderMappings().get(0).getProviderAssignedId();
 
         Assert.assertNotNull("cannot find machine config " + this.machineConfigName, selectedMachineConfig);
 
@@ -307,9 +304,6 @@ public class CloudProviderConnectorTest {
         System.out.println("Creating machine...");
         Machine machine = computeService.createMachine(machineCreate, target);
         String machineId = machine.getProviderAssignedId();
-        //XXX
-        computeService.stopMachine(machineId, true, target);
-        computeService.startMachine(machineId, target);
         
         this.waitForMachineState(computeService, target, machine.getProviderAssignedId(),
             CloudProviderConnectorTest.ASYNC_OPERATION_WAIT_TIME_IN_SECONDS, Machine.State.STARTED, Machine.State.STOPPED);
@@ -346,6 +340,7 @@ public class CloudProviderConnectorTest {
             }
         }
 
+        /*
         VolumeCreate volumeCreate = new VolumeCreate();
         VolumeTemplate volumeTemplate = new VolumeTemplate();
         VolumeConfiguration volumeConfig = new VolumeConfiguration();
@@ -415,14 +410,18 @@ public class CloudProviderConnectorTest {
         } catch (ConnectorException ex) {
             // OK
         }
+*/
 
         System.out.println("Deleting machine " + machineId);
         computeService.deleteMachine(machineId, target);
         try {
             this.waitForMachineState(computeService, target, machine.getProviderAssignedId(),
-                CloudProviderConnectorTest.ASYNC_OPERATION_WAIT_TIME_IN_SECONDS, Machine.State.DELETED);
+                CloudProviderConnectorTest.ASYNC_OPERATION_WAIT_TIME_IN_SECONDS, Machine.State.DELETING,
+                Machine.State.DELETED);
         } catch (ConnectorException ex) {
-            // OK
+            ex.printStackTrace();
+        } catch (ODataClientErrorException ex) {
+        	ex.printStackTrace();
         }
     }
 }

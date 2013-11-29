@@ -51,13 +51,17 @@ import org.ow2.sirocco.cloudmanager.model.cimi.ForwardingGroupNetwork;
 import org.ow2.sirocco.cloudmanager.model.cimi.Machine;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineConfiguration;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineCreate;
+import org.ow2.sirocco.cloudmanager.model.cimi.MachineDisk;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineImage;
+import org.ow2.sirocco.cloudmanager.model.cimi.MachineNetworkInterface;
+import org.ow2.sirocco.cloudmanager.model.cimi.MachineNetworkInterfaceAddress;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineTemplateNetworkInterface;
 import org.ow2.sirocco.cloudmanager.model.cimi.MachineVolume;
 import org.ow2.sirocco.cloudmanager.model.cimi.Network;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkPort;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkPortCreate;
+import org.ow2.sirocco.cloudmanager.model.cimi.Subnet;
 import org.ow2.sirocco.cloudmanager.model.cimi.Volume;
 import org.ow2.sirocco.cloudmanager.model.cimi.Volume.State;
 import org.ow2.sirocco.cloudmanager.model.cimi.VolumeCreate;
@@ -72,11 +76,13 @@ import com.msopentech.odatajclient.engine.client.http.HttpClientFactory;
 import com.msopentech.odatajclient.engine.client.http.HttpMethod;
 import com.msopentech.odatajclient.engine.communication.request.UpdateType;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataCUDRequestFactory;
+import com.msopentech.odatajclient.engine.communication.request.cud.ODataDeleteRequest;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataEntityCreateRequest;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataEntityUpdateRequest;
 import com.msopentech.odatajclient.engine.communication.request.retrieve.ODataEntityRequest;
 import com.msopentech.odatajclient.engine.communication.request.retrieve.ODataEntitySetRequest;
 import com.msopentech.odatajclient.engine.communication.request.retrieve.ODataRetrieveRequestFactory;
+import com.msopentech.odatajclient.engine.communication.response.ODataDeleteResponse;
 import com.msopentech.odatajclient.engine.communication.response.ODataEntityCreateResponse;
 import com.msopentech.odatajclient.engine.communication.response.ODataEntityUpdateResponse;
 import com.msopentech.odatajclient.engine.communication.response.ODataRetrieveResponse;
@@ -91,888 +97,1319 @@ import com.msopentech.odatajclient.engine.format.ODataPubFormat;
 import com.msopentech.odatajclient.engine.uri.ODataURIBuilder;
 import com.msopentech.odatajclient.engine.utils.Configuration;
 
-public class SCVMMCloudProviderConnector implements ICloudProviderConnector, IComputeService, IVolumeService,
-    INetworkService, IImageService {
-    private static Logger logger = LoggerFactory.getLogger(SCVMMCloudProviderConnector.class);
+public class SCVMMCloudProviderConnector implements ICloudProviderConnector, IComputeService,
+		IVolumeService, INetworkService, IImageService {
+	private static Logger logger = LoggerFactory.getLogger(SCVMMCloudProviderConnector.class);
 
-    private List<SCVMMProvider> providers = new ArrayList<SCVMMProvider>();
+	private List<SCVMMProvider> providers = new ArrayList<SCVMMProvider>();
 
-    private synchronized SCVMMProvider getProvider(final ProviderTarget target) {
-        for (SCVMMProvider provider : this.providers) {
-            if (provider.cloudProviderAccount.getId().equals(target.getAccount().getId())) {
-                // location can be null?
-                if (provider.cloudProviderLocation != target.getLocation()) {
-                    if (target.getLocation() != null) {
-                        if (provider.cloudProviderLocation.getId().equals(target.getLocation().getId())) {
-                            return provider;
-                        }
-                    }
-                } else {
-                    return provider;
-                }
-            }
-        }
-
-        SCVMMProvider provider = new SCVMMProvider(target.getAccount(), target.getLocation());
-        this.providers.add(provider);
-        return provider;
-    }
-
-    @Override
-    public Set<CloudProviderLocation> getLocations() {
-        return Collections.emptySet();
-    }
-
-    @Override
-    public IComputeService getComputeService() throws ConnectorException {
-        return this;
-    }
-
-    @Override
-    public ISystemService getSystemService() throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public IVolumeService getVolumeService() throws ConnectorException {
-        return this;
-    }
-
-    @Override
-    public IImageService getImageService() throws ConnectorException {
-        return this;
-    }
-
-    @Override
-    public INetworkService getNetworkService() throws ConnectorException {
-        return this;
-    }
-
-    @Override
-    public Network createNetwork(final NetworkCreate networkCreate, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).createNetwork(networkCreate);
-    }
-
-    @Override
-    public Network getNetwork(final String networkId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getNetwork(networkId);
-    }
-
-    @Override
-    public Network.State getNetworkState(final String networkId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getNetworkState(networkId);
-    }
-
-    @Override
-    public List<Network> getNetworks(final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getNetworks();
-    }
-
-    @Override
-    public void deleteNetwork(final String networkId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).deleteNetwork(networkId);
-    }
-
-    @Override
-    public void startNetwork(final String networkId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void stopNetwork(final String networkId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public NetworkPort createNetworkPort(final NetworkPortCreate networkPortCreate, final ProviderTarget target)
-        throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public NetworkPort getNetworkPort(final String networkPortId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void deleteNetworkPort(final String networkPortId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void startNetworkPort(final String networkPortId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void stopNetworkPort(final String networkPortId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public ForwardingGroup createForwardingGroup(final ForwardingGroupCreate forwardingGroupCreate, final ProviderTarget target)
-        throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public ForwardingGroup getForwardingGroup(final String forwardingGroupId, final ProviderTarget target)
-        throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void deleteForwardingGroup(final String forwardingGroupId, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void addNetworkToForwardingGroup(final String forwardingGroupId, final ForwardingGroupNetwork fgNetwork,
-        final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public void removeNetworkFromForwardingGroup(final String forwardingGroupId, final String networkId,
-        final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public Volume createVolume(final VolumeCreate volumeCreate, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).createVolume(volumeCreate);
-    }
-
-    @Override
-    public void deleteVolume(final String volumeId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).deleteVolume(volumeId);
-    }
-
-    @Override
-    public Volume.State getVolumeState(final String volumeId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getVolumeState(volumeId);
-    }
-
-    @Override
-    public Volume getVolume(final String volumeId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getVolume(volumeId);
-    }
-
-    @Override
-    public VolumeImage createVolumeImage(final VolumeImage volumeImage, final ProviderTarget target) throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public VolumeImage createVolumeSnapshot(final String volumeId, final VolumeImage volumeImage, final ProviderTarget target)
-        throws ConnectorException {
-        throw new ConnectorException("unsupported operation");
-    }
-
-    @Override
-    public VolumeImage getVolumeImage(final String volumeImageId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getVolumeImage(volumeImageId);
-    }
-
-    @Override
-    public void deleteVolumeImage(final String volumeImageId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).deleteVolumeImage(volumeImageId);
-    }
-
-    @Override
-    public Machine createMachine(final MachineCreate machineCreate, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).createMachine(machineCreate);
-    }
-
-    @Override
-    public void startMachine(final String machineId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).startMachine(machineId);
-    }
-
-    @Override
-    public void stopMachine(final String machineId, final boolean force, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).stopMachine(machineId, force);
-    }
-
-    @Override
-    public void suspendMachine(final String machineId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).suspendMachine(machineId);
-    }
-
-    @Override
-    public void restartMachine(final String machineId, final boolean force, final ProviderTarget target)
-        throws ConnectorException {
-        this.getProvider(target).restartMachine(machineId, force);
-    }
-
-    @Override
-    public void pauseMachine(final String machineId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).pauseMachine(machineId);
-    }
-
-    @Override
-    public void deleteMachine(final String machineId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).deleteMachine(machineId);
-    }
-
-    @Override
-    public MachineImage captureMachine(final String machineId, final MachineImage machineImage, final ProviderTarget target)
-        throws ConnectorException {
-        return this.getProvider(target).captureMachine(machineId, machineImage);
-    }
-
-    @Override
-    public Machine.State getMachineState(final String machineId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getMachineState(machineId);
-    }
-
-    @Override
-    public Machine getMachine(final String machineId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getMachine(machineId);
-    }
-
-    @Override
-    public void addVolumeToMachine(final String machineId, final MachineVolume machineVolume, final ProviderTarget target)
-        throws ConnectorException {
-        this.getProvider(target).addVolumeToMachine(machineId, machineVolume);
-    }
-
-    @Override
-    public void removeVolumeFromMachine(final String machineId, final MachineVolume machineVolume, final ProviderTarget target)
-        throws ConnectorException {
-        this.getProvider(target).removeVolumeFromMachine(machineId, machineVolume);
-    }
-
-    @Override
-    public void deleteMachineImage(final String imageId, final ProviderTarget target) throws ConnectorException {
-        this.getProvider(target).deleteMachineImage(imageId);
-    }
-
-    @Override
-    public MachineImage getMachineImage(final String machineImageId, final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getMachineImage(machineImageId);
-    }
-
-    @Override
-    public List<MachineConfiguration> getMachineConfigs(final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getMachineConfigs();
-    }
-
-    @Override
-    public List<MachineImage> getMachineImages(final boolean returnPublicImages, final Map<String, String> searchCriteria,
-        final ProviderTarget target) throws ConnectorException {
-        return this.getProvider(target).getMachineImages(returnPublicImages, searchCriteria);
-    }
-
-    
-    /**
-     * SCVMMProvider
-     *
-     */
-    private static class SCVMMProvider {
-    	
-    	public enum MachineAction {
-    		START("Start"),
-    		STOP("Stop"),
-    		SAVE_STATE("SaveState"),
-    		DISCARD_SAVED_STATE("DiscardSavedState"),
-    		SUSPEND("Suspend"),
-    		SHUTDOWN("Shutdown"),
-    		RESUME("Resume"),
-    		REPAIR("Repair"),
-    		REFRESH("Refresh"),
-    		RESET("Reset"),
-    		STORE("Store"),
-    		DEPLOY("Deploy");
-    		
-    		private String action;
-    		
-    		private MachineAction(String action) {
-    			this.action = action;
+	private synchronized SCVMMProvider getProvider(final ProviderTarget target) {
+		for (SCVMMProvider provider : this.providers) {
+			if (provider.cloudProviderAccount.getId().equals(target.getAccount().getId())) {
+				// location can be null?
+				if (provider.cloudProviderLocation != target.getLocation()) {
+					if (target.getLocation() != null) {
+						if (provider.cloudProviderLocation.getId().equals(
+								target.getLocation().getId())) {
+							return provider;
+						}
+					}
+				} else {
+					return provider;
+				}
 			}
-    	}
+		}
 
-        private CloudProviderAccount cloudProviderAccount;
+		SCVMMProvider provider = new SCVMMProvider(target.getAccount(), target.getLocation());
+		this.providers.add(provider);
+		return provider;
+	}
 
-        private CloudProviderLocation cloudProviderLocation;
-        
-        private String serviceRootURL;
-        
-        private String stampId;
-        
-        public SCVMMProvider(final CloudProviderAccount cloudProviderAccount,
-        		final CloudProviderLocation cloudProviderLocation) {
-        	this.cloudProviderAccount = cloudProviderAccount;
-        	this.cloudProviderLocation = cloudProviderLocation;
-        	this.serviceRootURL = cloudProviderAccount.getCloudProvider().getEndpoint();
-        	Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
-        	setStampId();
-        }
+	@Override
+	public Set<CloudProviderLocation> getLocations() {
+		return Collections.emptySet();
+	}
 
-        //
-        // Compute Service
-        //
+	@Override
+	public IComputeService getComputeService() throws ConnectorException {
+		return this;
+	}
 
-        public List<MachineConfiguration> getMachineConfigs() {
-        	logger.debug("Getting machine configs...");
-        	
-        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+	@Override
+	public ISystemService getSystemService() throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public IVolumeService getVolumeService() throws ConnectorException {
+		return this;
+	}
+
+	@Override
+	public IImageService getImageService() throws ConnectorException {
+		return this;
+	}
+
+	@Override
+	public INetworkService getNetworkService() throws ConnectorException {
+		return this;
+	}
+
+	@Override
+	public Network createNetwork(final NetworkCreate networkCreate, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).createNetwork(networkCreate);
+	}
+
+	@Override
+	public Network getNetwork(final String networkId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getNetwork(networkId);
+	}
+
+	@Override
+	public Network.State getNetworkState(final String networkId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getNetworkState(networkId);
+	}
+
+	@Override
+	public List<Network> getNetworks(final ProviderTarget target) throws ConnectorException {
+		return this.getProvider(target).getNetworks();
+	}
+
+	@Override
+	public void deleteNetwork(final String networkId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).deleteNetwork(networkId);
+	}
+
+	@Override
+	public void startNetwork(final String networkId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void stopNetwork(final String networkId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public NetworkPort createNetworkPort(final NetworkPortCreate networkPortCreate,
+			final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public NetworkPort getNetworkPort(final String networkPortId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void deleteNetworkPort(final String networkPortId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void startNetworkPort(final String networkPortId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void stopNetworkPort(final String networkPortId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public ForwardingGroup createForwardingGroup(final ForwardingGroupCreate forwardingGroupCreate,
+			final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public ForwardingGroup getForwardingGroup(final String forwardingGroupId,
+			final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void deleteForwardingGroup(final String forwardingGroupId, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void addNetworkToForwardingGroup(final String forwardingGroupId,
+			final ForwardingGroupNetwork fgNetwork, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void removeNetworkFromForwardingGroup(final String forwardingGroupId,
+			final String networkId, final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public Volume createVolume(final VolumeCreate volumeCreate, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).createVolume(volumeCreate);
+	}
+
+	@Override
+	public void deleteVolume(final String volumeId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).deleteVolume(volumeId);
+	}
+
+	@Override
+	public Volume.State getVolumeState(final String volumeId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getVolumeState(volumeId);
+	}
+
+	@Override
+	public Volume getVolume(final String volumeId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getVolume(volumeId);
+	}
+
+	@Override
+	public VolumeImage createVolumeImage(final VolumeImage volumeImage, final ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public VolumeImage createVolumeSnapshot(final String volumeId, final VolumeImage volumeImage,
+			final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public VolumeImage getVolumeImage(final String volumeImageId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getVolumeImage(volumeImageId);
+	}
+
+	@Override
+	public void deleteVolumeImage(final String volumeImageId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).deleteVolumeImage(volumeImageId);
+	}
+
+	@Override
+	public Machine createMachine(final MachineCreate machineCreate, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).createMachine(machineCreate);
+	}
+
+	@Override
+	public void startMachine(final String machineId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).startMachine(machineId);
+	}
+
+	@Override
+	public void stopMachine(final String machineId, final boolean force, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).stopMachine(machineId, force);
+	}
+
+	@Override
+	public void suspendMachine(final String machineId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).suspendMachine(machineId);
+	}
+
+	@Override
+	public void restartMachine(final String machineId, final boolean force,
+			final ProviderTarget target) throws ConnectorException {
+		this.getProvider(target).restartMachine(machineId, force);
+	}
+
+	@Override
+	public void pauseMachine(final String machineId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).pauseMachine(machineId);
+	}
+
+	@Override
+	public void deleteMachine(final String machineId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).deleteMachine(machineId);
+	}
+
+	@Override
+	public MachineImage captureMachine(final String machineId, final MachineImage machineImage,
+			final ProviderTarget target) throws ConnectorException {
+		return this.getProvider(target).captureMachine(machineId, machineImage);
+	}
+
+	@Override
+	public Machine.State getMachineState(final String machineId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getMachineState(machineId);
+	}
+
+	@Override
+	public Machine getMachine(final String machineId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getMachine(machineId);
+	}
+
+	@Override
+	public void addVolumeToMachine(final String machineId, final MachineVolume machineVolume,
+			final ProviderTarget target) throws ConnectorException {
+		this.getProvider(target).addVolumeToMachine(machineId, machineVolume);
+	}
+
+	@Override
+	public void removeVolumeFromMachine(final String machineId, final MachineVolume machineVolume,
+			final ProviderTarget target) throws ConnectorException {
+		this.getProvider(target).removeVolumeFromMachine(machineId, machineVolume);
+	}
+
+	@Override
+	public void deleteMachineImage(final String imageId, final ProviderTarget target)
+			throws ConnectorException {
+		this.getProvider(target).deleteMachineImage(imageId);
+	}
+
+	@Override
+	public MachineImage getMachineImage(final String machineImageId, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getMachineImage(machineImageId);
+	}
+
+	@Override
+	public List<MachineConfiguration> getMachineConfigs(final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getMachineConfigs();
+	}
+
+	@Override
+	public List<MachineImage> getMachineImages(final boolean returnPublicImages,
+			final Map<String, String> searchCriteria, final ProviderTarget target)
+			throws ConnectorException {
+		return this.getProvider(target).getMachineImages(returnPublicImages, searchCriteria);
+	}
+
+	/**
+	 * SCVMMProvider
+	 */
+	private static class SCVMMProvider {
+
+		public enum MachineAction {
+			START("Start"),
+			STOP("Stop"),
+			SAVE_STATE("SaveState"),
+			DISCARD_SAVED_STATE("DiscardSavedState"),
+			SUSPEND("Suspend"),
+			SHUTDOWN("Shutdown"),
+			RESUME("Resume"),
+			REPAIR("Repair"),
+			REFRESH("Refresh"),
+			RESET("Reset"),
+			STORE("Store"),
+			DEPLOY("Deploy");
+
+			private String action;
+
+			private MachineAction(String action) {
+				this.action = action;
+			}
+		}
+
+		private CloudProviderAccount cloudProviderAccount;
+
+		private CloudProviderLocation cloudProviderLocation;
+
+		private String serviceRootURL;
+
+		private final String stampId;
+
+		public SCVMMProvider(final CloudProviderAccount cloudProviderAccount,
+				final CloudProviderLocation cloudProviderLocation) {
+			this.cloudProviderAccount = cloudProviderAccount;
+			this.cloudProviderLocation = cloudProviderLocation;
+			this.serviceRootURL = cloudProviderAccount.getCloudProvider().getEndpoint();
+			Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
+			stampId = getStampId();
+			logger.info("StampId=" + stampId);
+		}
+
+		//
+		// Compute Service
+		//
+
+		/**
+		 * Returns all VMM hardware profiles
+		 * @return a list of all machine configurations
+		 */
+		public List<MachineConfiguration> getMachineConfigs() {
+			logger.info("Getting machine configs");
+
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("HardwareProfiles");
-		
+
 			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
 					.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
-		
+
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
 			final ODataEntitySet entitySet = res.getBody();
-		
-            List<MachineConfiguration> result = new ArrayList<>();
-            for (ODataEntity entity : entitySet.getEntities()) {
-            	MachineConfiguration machineConfig = new MachineConfiguration();
-            	
-            	// set name
-            	machineConfig.setName(entity.getProperty("Name").getValue()
-            			.toString());
-            	
-            	// set cpu
-            	machineConfig.setCpu(entity.getProperty("CPUCount").getValue()
-            			.asPrimitive().<Integer> toCastValue());
-            	
-            	// set memory
-            	machineConfig.setMemory(entity.getProperty("Memory").getValue()
-            			.asPrimitive().<Integer> toCastValue());
-            	
-            	// set disks
-            	List<DiskTemplate> disks = new ArrayList<>();
-                DiskTemplate disk = new DiskTemplate();
-                if (entity.getProperty("TotalVHDCapacity").hasNullValue()) {
-                	disk.setCapacity(0);
-                } else {
-                	disk.setCapacity(entity.getProperty("TotalVHDCapacity").getValue()
-                			.asPrimitive().<Integer> toCastValue());
-                }
-                disks.add(disk);
-                machineConfig.setDisks(disks);
-                
-            	// set provider mappings
-            	ProviderMapping providerMapping = new ProviderMapping();
-                providerMapping.setProviderAssignedId(
-                		entity.getProperty("ID").getValue().toString());
-                providerMapping.setProviderAccount(this.cloudProviderAccount);
-                machineConfig.setProviderMappings(Collections.singletonList(providerMapping));
-            	
-            	result.add(machineConfig);
-			}
-        	
-            return result;
-        }
 
- 
-        /**
-         * Creates a virtual machine with the configuration passed as a parameter
-         * @param machineCreate - virtual machine configuration 
-         * @return the virtual machine created
-         * @throws ConnectorException
-         */
-        public Machine createMachine(final MachineCreate machineCreate) throws ConnectorException {
-        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+			List<MachineConfiguration> result = new ArrayList<>();
+			for (ODataEntity entity : entitySet.getEntities()) {
+				MachineConfiguration machineConfig = new MachineConfiguration();
+
+				// set name
+				machineConfig.setName(entity.getProperty("Name").getValue().toString());
+
+				// set cpu
+				machineConfig.setCpu(entity.getProperty("CPUCount").getValue().asPrimitive()
+						.<Integer> toCastValue());
+
+				// set memory
+				machineConfig.setMemory(entity.getProperty("Memory").getValue().asPrimitive()
+						.<Integer> toCastValue());
+
+				// set disks
+				List<DiskTemplate> disks = new ArrayList<>();
+				DiskTemplate disk = new DiskTemplate();
+				if (entity.getProperty("TotalVHDCapacity").hasNullValue()) {
+					disk.setCapacity(0);
+				} else {
+					disk.setCapacity(entity.getProperty("TotalVHDCapacity").getValue()
+							.asPrimitive().<Integer> toCastValue());
+				}
+				disks.add(disk);
+				machineConfig.setDisks(disks);
+
+				// set provider mappings
+				ProviderMapping providerMapping = new ProviderMapping();
+				providerMapping.setProviderAssignedId(entity.getProperty("ID").getValue()
+						.toString());
+				providerMapping.setProviderAccount(this.cloudProviderAccount);
+				machineConfig.setProviderMappings(Collections.singletonList(providerMapping));
+
+				result.add(machineConfig);
+			}
+
+			logger.info("Number of machine configs: " + result.size());
+
+			return result;
+		}
+
+		/**
+		 * Creates a virtual machine with the configuration passed as a parameter
+		 * @param machineCreate - virtual machine configuration
+		 * @return the virtual machine created
+		 * @throws ResourceNotFoundException if cannot find machine image
+		 * @throws ConnectorException if creating the machine failed
+		 */
+		public Machine createMachine(final MachineCreate machineCreate)
+				throws ResourceNotFoundException, ConnectorException {
+			logger.info("Creating machine (Name=" + machineCreate.getName() + ")");
+
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntitySetSegment("VirtualMachines");
-		
+
 			ODataEntity machineConfig = ODataFactory.newEntity("VMM.VirtualMachine");
-			
-			// get CloudId and set StampId
-			String cloudId = getCloudIdFromName(
-					cloudProviderAccount.getProperties().get("cloudName"));
-		
+
+			// get CloudId
+			String cloudId = getCloudIdFromName(cloudProviderAccount.getProperties().get(
+					"cloudName"));
+
 			// add StampId
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
-					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
-							.setValue(UUID.fromString(getStampId())).build()));
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(stampId)).build()));
 
 			// add cloud id
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("CloudId",
-					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
-							.setValue(UUID.fromString(cloudId)).build()));
-						
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(cloudId)).build()));
+
 			// add name
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
-					new ODataPrimitiveValue.Builder().setText(machineCreate.getName())
-							.setType(EdmSimpleType.String).build()));
-		
+					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
+							EdmSimpleType.String).build()));
+
 			// add VMTemplateId
-			ProviderMapping mapping = ProviderMapping.find(
-					machineCreate.getMachineTemplate().getMachineImage(),
-	                cloudProviderAccount, cloudProviderLocation);
-            if (mapping == null) {
-                throw new ConnectorException("Cannot find imageId for image "
-                    + machineCreate.getMachineTemplate().getMachineImage().getName());
-            }
-            String templateId = mapping.getProviderAssignedId();
-//			String templateId = machineCreate.getMachineTemplate()
-//					.getMachineImage().getProviderAssignedId();
+			ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
+					.getMachineImage(), cloudProviderAccount, cloudProviderLocation);
+			if (mapping == null) {
+				throw new ResourceNotFoundException("Cannot find imageId for image "
+						+ machineCreate.getMachineTemplate().getMachineImage().getName());
+			}
+			String templateId = mapping.getProviderAssignedId();
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VMTemplateId",
-					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
-							.setValue(UUID.fromString(templateId)).build()));
-			
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(templateId)).build()));
+
 			// add NewVirtualNetworkAdapterInput
 			ODataCollectionValue collection = new ODataCollectionValue(
 					"Collection(VMM.NewVMVirtualNetworkAdapterInput)");
 
 			if (machineCreate.getMachineTemplate().getNetworkInterfaces() != null) {
-	            for (MachineTemplateNetworkInterface nic : 
-	            		machineCreate.getMachineTemplate().getNetworkInterfaces()) {
-	            	
-	    			ODataComplexValue nicOData = 
-	    					new ODataComplexValue("NewVMVirtualNetworkAdapterInput");
-	    			
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("VMNetworkName",
-	    					new ODataPrimitiveValue.Builder()
-	    							.setText(getNetworkNameFromId(nic.getNetwork().getProviderAssignedId()))
-	    							.setType(EdmSimpleType.String).build()));
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType", null));
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("IPv6AddressType", null));
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress", null));
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType", null));
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("VLanEnabled", null));
-	    			nicOData.add(ODataFactory.newPrimitiveProperty("VLanId", null));
-	    			
-	    			collection.add(nicOData);
-	            }
-	        }
-			
+				for (MachineTemplateNetworkInterface nic : machineCreate.getMachineTemplate()
+						.getNetworkInterfaces()) {
+
+					ODataComplexValue nicOData = new ODataComplexValue(
+							"NewVMVirtualNetworkAdapterInput");
+
+					nicOData.add(ODataFactory.newPrimitiveProperty("VMNetworkName",
+							new ODataPrimitiveValue.Builder().setText(
+									getNetworkNameFromId(nic.getNetwork().getProviderAssignedId()))
+									.setType(EdmSimpleType.String).build()));
+					nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType", null));
+					nicOData.add(ODataFactory.newPrimitiveProperty("IPv6AddressType", null));
+					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress", null));
+					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType", null));
+					nicOData.add(ODataFactory.newPrimitiveProperty("VLanEnabled", null));
+					nicOData.add(ODataFactory.newPrimitiveProperty("VLanId", null));
+
+					collection.add(nicOData);
+				}
+			}
+
 			machineConfig.addProperty(ODataFactory.newCollectionProperty(
 					"NewVirtualNetworkAdapterInput", collection));
-			
+
 			// add owner
 			ODataComplexValue owner = new ODataComplexValue("VMM.UserAndRole");
-			
-			/// set user name
-			owner.add(ODataFactory.newPrimitiveProperty("UserName",
-					new ODataPrimitiveValue.Builder()
-							.setText(cloudProviderAccount.getLogin())
-							.setType(EdmSimpleType.String).build()));
-			
-			/// set role name
-			String tenantName = cloudProviderAccount.getProperties().get("tenantName");
-			owner.add(ODataFactory.newPrimitiveProperty("RoleName",
-					new ODataPrimitiveValue.Builder().setText(tenantName)
-							.setType(EdmSimpleType.String).build()));
 
-			/// set role id
-			owner.add(ODataFactory.newPrimitiveProperty("RoleID",
-					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
-							.setValue(UUID.fromString(
-									tenantName.substring(tenantName.length()-36)))
-							.build()));
-			
+			// owner: set user name
+			String userName = cloudProviderAccount.getProperties().get("tenantName");
+			owner.add(ODataFactory.newPrimitiveProperty("UserName",
+					new ODataPrimitiveValue.Builder().setText(userName).setType(
+							EdmSimpleType.String).build()));
+
+			// owner: set role name
+			// String roleName = getRoleNameFromUserName(userName);
+			String roleName = cloudProviderAccount.getProperties().get("tenantRoleName");
+			owner.add(ODataFactory.newPrimitiveProperty("RoleName",
+					new ODataPrimitiveValue.Builder().setText(roleName).setType(
+							EdmSimpleType.String).build()));
+
+			// owner: set role id
+			// String roleID = roleName.substring(roleName.length() - 36);
+			String roleID = cloudProviderAccount.getProperties().get("tenantID");
+			owner.add(ODataFactory.newPrimitiveProperty("RoleID", new ODataPrimitiveValue.Builder()
+					.setType(EdmSimpleType.Guid).setValue(UUID.fromString(roleID)).build()));
+
 			machineConfig.addProperty(ODataFactory.newComplexProperty("Owner", owner));
-			
-			// create and execute request			
+
+			// create and execute request
 			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
 					.getEntityCreateRequest(uriBuilder.build(), machineConfig);
 			createReq.setFormat(ODataPubFormat.ATOM);
-			
+
 			final ODataEntityCreateResponse createRes = createReq.execute();
 
 			// response processing
 			if (createRes.getStatusCode() != 201) {
-				logger.error("Machine creation failed: " + createRes.getStatusMessage());
-				throw new ConnectorException(
-						"Machine creation failed: " + createRes.getStatusMessage());
+				throw new ConnectorException("Machine creation failed: "
+						+ createRes.getStatusMessage());
 			}
 
 			machineConfig = createRes.getBody();
-			
-			logger.info("Machine creation succeed (ID=" + machineConfig
-					.getProperty("ID").getValue() + ")");
-			
+
+			logger.info("Machine creation succeed (" + "Name="
+					+ machineConfig.getProperty("Name").getValue() + ", ID="
+					+ machineConfig.getProperty("ID").getValue() + ")");
+
 			final Machine machine = new Machine();
-			machine.setProviderAssignedId(
-            		machineConfig.getProperty("ID").getValue().toString());
-			
-            return machine;
-        }
+			machine.setProviderAssignedId(machineConfig.getProperty("ID").getValue().toString());
 
-        public void startMachine(final String machineId) throws ConnectorException {
-        	actionMachine(machineId, MachineAction.START);
-        }
+			return machine;
+		}
 
-        public void stopMachine(final String machineId, final boolean force) throws ConnectorException {
-        	actionMachine(machineId, MachineAction.STOP);
-        }
+		/**
+		 * Starts a machine defined by its ID
+		 * @param machineId
+		 * @throws ConnectorException if starting the machine failed
+		 */
+		public void startMachine(final String machineId) throws ConnectorException {
+			actionMachine(machineId, MachineAction.START);
+		}
 
-        public void suspendMachine(final String machineId) throws ConnectorException {
-        	actionMachine(machineId, MachineAction.SUSPEND);
-        }
+		/**
+		 * Stops a machine defined by its ID
+		 * @param machineId
+		 * @throws ConnectorException if stopping the machine failed
+		 */
+		public void stopMachine(final String machineId, final boolean force)
+				throws ConnectorException {
+			actionMachine(machineId, MachineAction.STOP);
+		}
 
-        public void restartMachine(final String machineId, final boolean force) throws ConnectorException {
-        	actionMachine(machineId, MachineAction.RESET);
-        }
+		/**
+		 * Suspends a machine defined by its ID
+		 * @param machineId
+		 * @throws ConnectorException if suspending the machine failed
+		 */
+		public void suspendMachine(final String machineId) throws ConnectorException {
+			actionMachine(machineId, MachineAction.SUSPEND);
+		}
 
-        public void pauseMachine(final String machineId) throws ConnectorException {
-        	actionMachine(machineId, MachineAction.SUSPEND);
-        }
+		/**
+		 * Restarts a machine defined by its ID
+		 * @param machineId
+		 * @throws ConnectorException if restarting the machine failed
+		 */
+		public void restartMachine(final String machineId, final boolean force)
+				throws ConnectorException {
+			actionMachine(machineId, MachineAction.RESET);
+		}
 
-        public MachineImage captureMachine(final String machineId, final MachineImage machineImage) throws ConnectorException {
-            throw new ConnectorException("unsupported operation");
-        }
+		/**
+		 * Pauses a machine defined by its ID
+		 * @param machineId
+		 * @throws ConnectorException if pausing the machine failed
+		 */
+		public void pauseMachine(final String machineId) throws ConnectorException {
+			actionMachine(machineId, MachineAction.SUSPEND);
+		}
 
-        public void deleteMachine(final String machineId) throws ConnectorException {
-        }
+		public MachineImage captureMachine(final String machineId, final MachineImage machineImage)
+				throws ConnectorException {
+			throw new ConnectorException("unsupported operation");
+		}
 
-        public org.ow2.sirocco.cloudmanager.model.cimi.Machine.State getMachineState(final String machineId)
-            throws ConnectorException {
-            // TODO
-            throw new ConnectorException("unsupported operation");
-        }
+		/**
+		 * Deletes a machine defined by its ID
+		 * @param machineId
+		 * @throws ConnectorException if the machine deletion failed
+		 */
+		public void deleteMachine(final String machineId) throws ConnectorException {
+			logger.info("Deleting machine (ID=" + machineId + ")");
 
-        public Machine getMachine(final String machineId) throws ConnectorException {
-            throw new ResourceNotFoundException("Machine with id " + machineId + " does not exist");
-        }
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key);
 
-        public void addVolumeToMachine(final String machineId, final MachineVolume machineVolume) throws ConnectorException {
-        }
+			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
 
-        public void removeVolumeFromMachine(final String machineId, final MachineVolume machineVolume) {
-        }
+			// Stop the VM if it is running
+			if (!getMachineState(machineId).equals(Machine.State.STOPPED)) {
+				stopMachine(machineId, true);
+			}
 
-        //
-        // Volume Service
-        //
+			final ODataDeleteResponse res = req.execute();
 
-        public Volume createVolume(final VolumeCreate volumeCreate) throws ConnectorException {
-            // TODO
-            throw new ConnectorException("unsupported operation");
-        }
+			// response processing
+			if (res.getStatusCode() != 204) {
+				throw new ConnectorException("Machine deletion failed (HTTP status: "
+						+ res.getStatusCode() + "):" + res.getStatusMessage());
+			}
 
-        public void deleteVolume(final String volumeId) throws ConnectorException {
-        }
+			logger.info("Machine deletion succeed");
+		}
 
-        public State getVolumeState(final String volumeId) throws ConnectorException {
-            // TODO
-            throw new ConnectorException("unsupported operation");
-        }
+		/**
+		 * Returns the state of a machine defined by its ID
+		 * @param machineId
+		 * @return the machine state requested by its ID
+		 * @throws ResourceNotFoundException if the requested machine does not exist
+		 */
+		public Machine.State getMachineState(final String machineId)
+				throws ResourceNotFoundException {
+			logger.info("Getting machine state (ID=" + machineId + ")");
 
-        public Volume getVolume(final String volumeId) throws ConnectorException {
-            throw new ConnectorException("unsupported operation");
-        }
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key).select(
+							"Status");
 
-        public VolumeImage getVolumeImage(final String volumeImageId) throws ConnectorException {
-            throw new ConnectorException("unsupported operation");
-        }
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
 
-        public void deleteVolumeImage(final String volumeImageId) throws ConnectorException {
-            throw new ConnectorException("unsupported operation");
-        }
+			final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
-        //
-        // Image Service
-        //
+			if (res.getStatusCode() == 404) {
+				throw new ResourceNotFoundException("Machine with id " + machineId
+						+ " does not exist");
+			}
 
-        public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
-            final Map<String, String> searchCriteria) throws ConnectorException {
-            List<MachineImage> result = new ArrayList<>();
-            return result;
-        }
+			ODataEntity machine = res.getBody();
+			String status = machine.getProperty("Status").getValue().toString();
+			logger.info("Machine state: " + status + " (ID=" + machineId + ")");
 
-        public void deleteMachineImage(final String imageId) {
-            // TODO Auto-generated method stub
+			return fromODataVMStatusToMachineState(status);
+		}
 
-        }
+		/**
+		 * Returns a machine defined by its ID
+		 * @param machineId
+		 * @return the machine requested by its ID
+		 * @throws ResourceNotFoundException if the requested machine does not exist
+		 */
+		public Machine getMachine(final String machineId) throws ResourceNotFoundException {
+			logger.info("Getting machine (ID=" + machineId + ")");
 
-        public MachineImage getMachineImage(final String machineImageId) {
-            // TODO Auto-generated method stub
-            return null;
-        }
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key);
 
-        //
-        // Network Service
-        //
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
 
-        public void deleteNetwork(final String networkId) {
-            // TODO Auto-generated method stub
+			final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
-        }
+			if (res.getStatusCode() == 404) {
+				throw new ResourceNotFoundException("Machine with id " + machineId
+						+ " does not exist");
+			}
 
-        public org.ow2.sirocco.cloudmanager.model.cimi.Network.State getNetworkState(final String networkId) {
-            // TODO Auto-generated method stub
-            return null;
-        }
+			ODataEntity machine = res.getBody();
+			logger.info("Machine requested: " + "ID=" + machine.getProperty("ID").getValue() + ", "
+					+ "Name=" + machine.getProperty("Name").getValue());
 
-        public Network getNetwork(final String networkId) {
-            // TODO Auto-generated method stub
-            return null;
-        }
+			return fromODataVMToMachine(machine);
+		}
 
-        public Network createNetwork(final NetworkCreate networkCreate) {
-            // TODO Auto-generated method stub
-            return null;
-        }
+		public void addVolumeToMachine(final String machineId, final MachineVolume machineVolume)
+				throws ConnectorException {
+		}
 
-        public List<Network> getNetworks() {
-            // TODO Auto-generated method stub
-            return Collections.emptyList();
-        }
-        
-        
-        //
-        // OData functions
-        //
-    	
-    	/**
-    	 * Returns Stamp identifier
-    	 * @return Stamp identifier
-    	 */
-    	private String getStampId() {
-    		if (stampId == null) {
-    			setStampId();
-    		}
-    		return stampId;
-    	}
+		public void removeVolumeFromMachine(final String machineId,
+				final MachineVolume machineVolume) {
+		}
 
-    	/**
-    	 * Queries Stamp identifier and sets it
-    	 */
-        private void setStampId() {
-        	//XXX we don't know how to get directly the StampId without querying an entity
-        	// So we operate on 'Clouds' entity type because there should be at least one cloud
-        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("Clouds");
-		
+		//
+		// Volume Service
+		//
+
+		public Volume createVolume(final VolumeCreate volumeCreate) throws ConnectorException {
+			// TODO
+			throw new ConnectorException("unsupported operation");
+		}
+
+		public void deleteVolume(final String volumeId) throws ConnectorException {
+		}
+
+		public State getVolumeState(final String volumeId) throws ConnectorException {
+			// TODO
+			throw new ConnectorException("unsupported operation");
+		}
+
+		public Volume getVolume(final String volumeId) throws ConnectorException {
+			throw new ConnectorException("unsupported operation");
+		}
+
+		public VolumeImage getVolumeImage(final String volumeImageId) throws ConnectorException {
+			throw new ConnectorException("unsupported operation");
+		}
+
+		public void deleteVolumeImage(final String volumeImageId) throws ConnectorException {
+			throw new ConnectorException("unsupported operation");
+		}
+
+		//
+		// Image Service
+		//
+
+		/*
+		public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
+				final Map<String, String> searchCriteria) throws ConnectorException {
+			logger.info("Getting machine images");
+
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualHardDisks").filter(
+							"StampId eq guid'" + stampId + "'");
+
 			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
 					.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
-		
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+
+			List<MachineImage> result = new ArrayList<MachineImage>();
+
+			for (ODataEntity vhd : entitySet.getEntities()) {
+				MachineImage machineImage = new MachineImage();
+				// set name
+				machineImage.setName(vhd.getProperty("Name").getValue().toString());
+				// TODO set state
+				machineImage.setState(MachineImage.State.AVAILABLE);
+				// TODO set type
+				machineImage.setType(MachineImage.Type.IMAGE);
+				// set provider mappings
+				ProviderMapping providerMapping = new ProviderMapping();
+				providerMapping.setProviderAssignedId(vhd.getProperty("ID").getValue().toString());
+				providerMapping.setProviderAccount(cloudProviderAccount);
+				providerMapping.setProviderLocation(cloudProviderLocation);
+				machineImage.setProviderMappings(Collections.singletonList(providerMapping));
+				// set image location
+				machineImage.setImageLocation(vhd.getProperty("Location").getValue().toString());
+
+				result.add(machineImage);
+			}
+
+			return result;
+		}
+		 */
+
+		public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
+				final Map<String, String> searchCriteria) throws ConnectorException {
+			logger.info("Getting machine images");
+
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMTemplates");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+
+			List<MachineImage> result = new ArrayList<MachineImage>();
+			for (ODataEntity template : entitySet.getEntities()) {
+				MachineImage machineImage = new MachineImage();
+
+				// set name
+				machineImage.setName(template.getProperty("Name").getValue().toString());
+				// set provider mappings
+				ProviderMapping providerMapping = new ProviderMapping();
+				providerMapping.setProviderAssignedId(template.getProperty("ID").getValue()
+						.toString());
+				providerMapping.setProviderAccount(cloudProviderAccount);
+				providerMapping.setProviderLocation(cloudProviderLocation);
+				machineImage.setProviderMappings(Collections.singletonList(providerMapping));
+
+				result.add(machineImage);
+			}
+			
+			logger.info("Number of machine images: " + result.size());
+
+			return result;
+		}
+
+		public void deleteMachineImage(final String imageId) {
+		}
+
+		public MachineImage getMachineImage(final String machineImageId) {
+			return null;
+		}
+
+		//
+		// Network Service
+		//
+
+		public void deleteNetwork(final String networkId) {
+		}
+
+		public Network.State getNetworkState(final String networkId) {
+			return null;
+		}
+
+		public Network getNetwork(final String networkId) {
+			return null;
+		}
+
+		public Network createNetwork(final NetworkCreate networkCreate) {
+			return null;
+		}
+
+		/**
+		 * Returns all VMM networks
+		 * @return a list of all existing networks
+		 */
+		public List<Network> getNetworks() {
+			logger.info("Getting networks");
+
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworks");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+
+			List<Network> result = new ArrayList<>();
+			for (ODataEntity entity : entitySet.getEntities()) {
+				result.add(fromODataNetworkToCimiNetwork(entity));
+			}
+			
+			logger.info("Number of networks: " + result.size());
+
+			return result;
+		}
+
+		//
+		// OData functions
+		//
+
+		/**
+		 * Queries Stamp identifier depending on cloud name
+		 * @return Stamp identifier
+		 * @throws ConnectorException if cannot find StampId with the given cloud name
+		 */
+		private final String getStampId() {
+			String cloudName = cloudProviderAccount.getProperties().get("cloudName");
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("Clouds").filter("Name eq '" + cloudName + "'")
+					.select("StampId");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
 			final ODataEntitySet entities = res.getBody();
-			
+
 			if (entities.getEntities().isEmpty()) {
-				//TODO raise exception
+				logger.error("Cannot find StampId with the given cloud '" + cloudName + "'");
+				return null;
 			} else {
-				stampId = entities.getEntities().get(0).getProperty("StampId").getValue().toString();
+				return entities.getEntities().get(0).getProperties().get(0).getValue().toString();
 			}
 		}
-        
-        /**
-         * Retrieves cloud identifier with its name and sets attribute StampId if not already set
-         * @param cloudName - cloud identified name
-         * @return cloud identifier depending on the cloud name passed as a parameter
-         */
-        private String getCloudIdFromName(String cloudName) {
-        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("Clouds");
-		
+
+		/**
+		 * Retrieves cloud identifier with its name
+		 * @param cloudName - cloud identified name
+		 * @return cloud identifier depending on the cloud name passed as a parameter
+		 * @throws ResourceNotFoundException if cloud does not exist
+		 */
+		private String getCloudIdFromName(String cloudName) throws ResourceNotFoundException {
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("Clouds").filter("Name eq '" + cloudName + "'")
+					.select("ID");
+
 			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
 					.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
-		
+
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			final ODataEntitySet entities = res.getBody();
-			
-			for (ODataEntity entity : entities.getEntities()) {
-				if (entity.getProperty("Name").getValue().toString().equals(cloudName)) {
-					return entity.getProperty("ID").getValue().toString();
-				}
+			if (res.getStatusCode() == 404) {
+				throw new ResourceNotFoundException("Cloud '" + cloudName + "'does not exist");
 			}
-			
-			return null;
-        }
-        
-        /**
-         * Retrieves network name with its identifier and sets attribute StampId if not already set
-         * @param networkId - network identifier
-         * @return network name depending on the network identifier passed as a parameter
-         */
-        private String getNetworkNameFromId(String networkId) {
-        	final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("VMNetworks");
-		
+
+			return res.getBody().getEntities().get(0).getProperties().get(0).getValue().toString();
+		}
+
+		/**
+		 * Retrieves network name with its identifier
+		 * @param networkId - network identifier
+		 * @return network name depending on the network identifier passed as a parameter
+		 * @throws ResourceNotFoundException if network does not exist
+		 */
+		private String getNetworkNameFromId(String networkId) throws ResourceNotFoundException {
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key).select("Name");
+
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntity> res = req.execute();
+			if (res.getStatusCode() == 404) {
+				throw new ResourceNotFoundException("Network does not exist with ID=" + networkId);
+			}
+
+			return res.getBody().getProperties().get(0).getValue().toString();
+		}
+
+		/**
+		 * Retrieves user role name with its unique name. A user role is the concatenation of the
+		 * user name and an identifier.
+		 * @param userName - user identified name
+		 * @return user role name depending on the user name passed as a parameter
+		 * @throws ResourceNotFoundException if user does not exist
+		 */
+		private String getRoleNameFromUserName(String userName) throws ResourceNotFoundException {
+			// user role maximum length is 64 characters and identifier
+			// length is 36 characters so user name is truncated if its
+			// length is over than 27 characters
+			if (userName.length() > 27) {
+				userName = userName.substring(0, 27);
+			}
+
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("UserRoles").filter(
+							"startswith(Name, '" + userName + "')").select("Name");
+
 			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
 					.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
-		
+
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			final ODataEntitySet entities = res.getBody();
-			
-			for (ODataEntity entity : entities.getEntities()) {
-				if (entity.getProperty("ID").getValue().toString().equals(networkId)) {
-					return entity.getProperty("Name").getValue().toString();
-				}
+			if (res.getStatusCode() == 404) {
+				throw new ResourceNotFoundException("User '" + userName + "'does not exist");
 			}
-			
-			return null;
-        }
-        
-        /**
-    	 * Controls the virtual machine defined by its identifier
-    	 * @param machineId - virtual machine identifier
-    	 * @param stampId - stamp identifier
-    	 * @param machineAction - action to operate
-         * @return request status code
-    	 */
-    	private int actionMachine(String machineId, MachineAction machineAction) {
-    		Map<String, Object> key = new HashMap<String, Object>();
-    		key.put("ID", UUID.fromString(machineId));
-    		key.put("StampId", UUID.fromString(stampId));
-    		final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-    				.appendEntityTypeSegment("VirtualMachines")
-    				.appendKeySegment(key);
 
-    		ODataEntity machine = ODataFactory.newEntity("VMM.VirtualMachine");
-    		
-    		// add ID
-    		machine.addProperty(ODataFactory.newPrimitiveProperty("ID",
-    				new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
-    						.setValue(UUID.fromString(machineId)).build()));
+			return res.getBody().getEntities().get(0).getProperties().get(0).getValue().toString();
+		}
 
-    		// add stampId
-    		machine.addProperty(ODataFactory.newPrimitiveProperty("StampId",
-    				new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid)
-    						.setValue(UUID.fromString(getStampId())).build()));
+		/**
+		 * Controls the virtual machine defined by its ID
+		 * @param machineId - virtual machine identifier
+		 * @param machineAction - action to operate
+		 * @throws ConnectorException if machine action failed
+		 */
+		private void actionMachine(String machineId, MachineAction machineAction)
+				throws ConnectorException {
+			logger.info("Operating machine (action=" + machineAction.action + ")");
 
-    		// add operation
-    		machine.addProperty(ODataFactory.newPrimitiveProperty("Operation",
-    				new ODataPrimitiveValue.Builder().setText(machineAction.action)
-    						.setType(EdmSimpleType.String).build()));
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key);
 
-    		final ODataEntityUpdateRequest req = ODataCUDRequestFactory
-    				.getEntityUpdateRequest(uriBuilder.build(), UpdateType.REPLACE,
-    						machine);
-    		req.setFormat(ODataPubFormat.ATOM);
+			ODataEntity machine = ODataFactory.newEntity("VMM.VirtualMachine");
 
-    		final ODataEntityUpdateResponse res = req.execute();
-    		
-    		return res.getStatusCode();
-    	}
+			// add ID
+			machine.addProperty(ODataFactory.newPrimitiveProperty("ID",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(machineId)).build()));
 
-        private Machine fromODataEntityToMachine(ODataEntity machine) {
-        	Machine machineRes = new Machine();
-        	machineRes.setProviderAssignedId(
-            		machine.getProperty("ID").getValue().toString());
-            machineRes.setName(
-            		machine.getProperty("Name").getValue().toString());
-            machineRes.setState(fromODataStatusToMachineState(
-            		machine.getProperty("Status").getValue().toString()));
-        	
-        	return machineRes;
-        }
-        
-        private Machine.State fromODataStatusToMachineState(String status) {
-        	//TODO add others states
-        	if (status.equals("Running")) {
-				return Machine.State.STARTED;
-				
-			} else if (status.equals("PowerOff")) {
-				return Machine.State.STOPPED;
-				
-			} else if (status.equals("UnderCreation")) {
-        		return Machine.State.CREATING;
-        		
+			// add stampId
+			machine.addProperty(ODataFactory.newPrimitiveProperty("StampId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(stampId)).build()));
+
+			// add operation
+			machine.addProperty(ODataFactory.newPrimitiveProperty("Operation",
+					new ODataPrimitiveValue.Builder().setText(machineAction.action).setType(
+							EdmSimpleType.String).build()));
+
+			final ODataEntityUpdateRequest req = ODataCUDRequestFactory.getEntityUpdateRequest(
+					uriBuilder.build(), UpdateType.REPLACE, machine);
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataEntityUpdateResponse res = req.execute();
+
+			if (res.getStatusCode() != 200 && res.getStatusCode() != 204) {
+				throw new ConnectorException(machineAction.action
+						+ " machine failed (HTTP status: " + res.getStatusCode() + "): "
+						+ res.getStatusMessage());
+			}
+
+			logger.info(machineAction.action + " machine succeed");
+		}
+
+		/**
+		 * Maps a virtual machine OData entity to a Machine object
+		 * @param entity - a 'VirtualMachine' OData entity
+		 * @return a Machine object mapped from OData entity parameter, or null if the entity is not
+		 *         a virtual machine entity
+		 */
+		private Machine fromODataVMToMachine(ODataEntity entity) {
+			if (!entity.getName().equals("VMM.VirtualMachine")) {
+				return null;
+			}
+
+			Machine machine = new Machine();
+			String machineId = entity.getProperty("ID").getValue().toString();
+
+			// set id
+			machine.setProviderAssignedId(machineId);
+
+			// set name
+			machine.setName(entity.getProperty("Name").getValue().toString());
+
+			// set state
+			machine.setState(fromODataVMStatusToMachineState(entity.getProperty("Status")
+					.getValue().toString()));
+
+			// set cpu
+			machine.setCpu(entity.getProperty("CPUCount").getValue().asPrimitive()
+					.<Integer> toCastValue());
+
+			// set memory
+			machine.setCpu(entity.getProperty("Memory").getValue().asPrimitive()
+					.<Integer> toCastValue());
+
+			// set disks
+			List<MachineDisk> machineDisks = new ArrayList<MachineDisk>();
+			for (ODataEntity vhd : getVirtualHardDisks(machineId).getEntities()) {
+				MachineDisk machineDisk = new MachineDisk();
+				// set disk name
+				machineDisk.setName(vhd.getProperty("Name").getValue().toString());
+				// set disk capacity
+				Long capacity = vhd.getProperty("MaximumSize").getValue().asPrimitive()
+						.<Long> toCastValue() / 1024; // Byte to KB
+				machineDisk.setCapacity(capacity.intValue());
+				machineDisks.add(machineDisk);
+			}
+			machine.setDisks(machineDisks);
+
+			// set nics
+			List<MachineNetworkInterface> nics = new ArrayList<MachineNetworkInterface>();
+			for (ODataEntity odataNetwork : getVirtualNetworkAdapters(machineId).getEntities()) {
+				MachineNetworkInterface nic = new MachineNetworkInterface();
+
+				// set network
+				nic.setNetwork(fromODataNetworkAdapterToCimiNetwork(odataNetwork));
+
+				// TODO set addresses
+				List<MachineNetworkInterfaceAddress> cimiAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
+				nic.setAddresses(cimiAddresses);
+
+				// TODO set state
+				nic.setState(MachineNetworkInterface.InterfaceState.ACTIVE);
+
+				nics.add(nic);
+			}
+			machine.setNetworkInterfaces(nics);
+
+			// TODO set volumes
+			List<MachineVolume> machineVolumes = new ArrayList<MachineVolume>();
+			// /TODO set volume
+			// //TODO set name
+			// //TODO set description ?
+			// //TODO set provider assign id
+			// //TODO set state
+			// //TODO set capacity
+			// /TODO set provider assign id
+			// /TODO set state
+			// /TODO set initial location
+			machine.setVolumes(machineVolumes);
+
+			return machine;
+		}
+
+		private Network fromODataNetworkAdapterToCimiNetwork(ODataEntity odataNetworkAdapter) {
+			Network cimiNetwork = new Network();
+			// set network name
+			cimiNetwork.setName(odataNetworkAdapter.getProperty("VMNetworkName").getValue().toString());
+			// set network id
+			cimiNetwork.setProviderAssignedId(odataNetworkAdapter.getProperty("VMNetworkId").getValue()
+					.toString());
+			// TODO set network state
+
+			// set network type
+			if (odataNetworkAdapter.getProperty("Accessibility").getValue().toString().equals("Public")) {
+				cimiNetwork.setNetworkType(Network.Type.PUBLIC);
+			} else {
+				cimiNetwork.setNetworkType(Network.Type.PRIVATE);
+			}
+
+			// TODO set network subnets
+			List<Subnet> subnets = new ArrayList<Subnet>();
+			cimiNetwork.setSubnets(subnets);
+
+			return cimiNetwork;
+		}
+		
+		private Network fromODataNetworkToCimiNetwork(ODataEntity odataNetwork) {
+			Network cimiNetwork = new Network();
+			// set network name
+			cimiNetwork.setName(odataNetwork.getProperty("Name").getValue().toString());
+			// set network id
+			cimiNetwork.setProviderAssignedId(odataNetwork.getProperty("ID").getValue()
+					.toString());
+			// TODO set network state
+			cimiNetwork.setState(Network.State.STARTED);
+			// TODO set network type
+			cimiNetwork.setNetworkType(Network.Type.PUBLIC);
+			// TODO set network subnets
+			List<Subnet> subnets = new ArrayList<Subnet>();
+			cimiNetwork.setSubnets(subnets);
+
+			return cimiNetwork;
+		}
+
+		/**
+		 * Maps a virtual machine OData status to a Machine state
+		 * @param status - a virtual machine OData status
+		 * @return a Machine state mapped from OData status parameter,
+		 */
+		private Machine.State fromODataVMStatusToMachineState(String status) {
+			if (status.equals("UnderCreation")) {
+				return Machine.State.CREATING;
+
 			} else if (status.equals("Starting")) {
 				return Machine.State.STARTING;
-				
-        	} else if (status.equals("Paused")) {
+
+			} else if (status.equals("Running")) {
+				return Machine.State.STARTED;
+
+			} else if (status.equals("PoweringOff")) {
+				return Machine.State.STOPPING;
+
+			} else if (status.equals("PowerOff")) {
+				return Machine.State.STOPPED;
+
+			} else if (status.equals("Pausing")) {
+				return Machine.State.PAUSING;
+
+			} else if (status.equals("Paused")) {
 				return Machine.State.PAUSED;
-				
+
+			} else if (status.equals("Saving")) {
+				// XXX not sure
+				return Machine.State.SUSPENDING;
+
 			} else if (status.equals("Saved")) {
+				// XXX not sure
 				return Machine.State.SUSPENDED;
-				
+
+			} else if (status.equals("Deleting")) {
+				return Machine.State.DELETING;
+
+			} else if (status.equals("Restoring")) {
+				// XXX not sure
+				// Restoring is when a VM passed from saved state
+				// to running state
+				return Machine.State.STARTING;
+
 			} else {
-        		return Machine.State.ERROR;
-        	}
-        }
-    
-    
-        /**
-         * SimpleHttpsClientFactory
-         *
-         */
-        private class SimpleHttpsClientFactory implements HttpClientFactory {
+				logger.error("Unknown VM status: " + status);
+				return Machine.State.ERROR;
+			}
+		}
 
-    		public HttpClient createHttpClient(final HttpMethod method,
-    				final URI uri) {
+		/**
+		 * Retrieves virtual hard disks of a VM depending on its identifier passed as a parameter
+		 * @param machineId - VM identifier
+		 * @return a set of virtual hard disks of the defined VM
+		 */
+		private ODataEntitySet getVirtualHardDisks(String machineId) {
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
+					.appendEntityTypeSegment("VirtualHardDisks");
 
-    			SSLContext sslContext = null;
-    			try {
-    				sslContext = SSLContext.getInstance("SSL");
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
 
-    				sslContext.init(null,
-    						new TrustManager[] { new X509TrustManager() {
-    							public X509Certificate[] getAcceptedIssuers() {
-    								return new X509Certificate[] {};
-    							}
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			return res.getBody();
+		}
 
-    							public void checkClientTrusted(
-    									X509Certificate[] certs, String authType) {
-    							}
+		/**
+		 * Retrieves virtual network adapters of a VM depending on its identifier passed as a
+		 * parameter
+		 * @param machineId - VM identifier
+		 * @return a set of virtual network adapters of the defined VM
+		 */
+		private ODataEntitySet getVirtualNetworkAdapters(String machineId) {
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
+					.appendEntityTypeSegment("VirtualNetworkAdapters");
 
-    							public void checkServerTrusted(
-    									X509Certificate[] certs, String authType) {
-    							}
-    						} }, new SecureRandom());
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
 
-    				SSLSocketFactory sf = new SSLSocketFactory(sslContext,
-    						SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			return res.getBody();
+		}
 
-    				Scheme httpsScheme = new Scheme("https", 443, sf);
-    				SchemeRegistry schemeRegistry = new SchemeRegistry();
-    				schemeRegistry.register(httpsScheme);
+		/**
+		 * Class used to instantiate HttpClient
+		 */
+		private class SimpleHttpsClientFactory implements HttpClientFactory {
 
-    				BasicClientConnectionManager cm = new BasicClientConnectionManager(
-    						schemeRegistry);
+			public HttpClient createHttpClient(final HttpMethod method, final URI uri) {
 
-    				DefaultHttpClient httpclient = new DefaultHttpClient(cm);
+				SSLContext sslContext = null;
+				try {
+					sslContext = SSLContext.getInstance("SSL");
 
-    				httpclient.getCredentialsProvider().setCredentials(
-    						AuthScope.ANY,
-    						new UsernamePasswordCredentials(
-    								cloudProviderAccount.getLogin(),
-    								cloudProviderAccount.getPassword()));
-    				httpclient.addRequestInterceptor(
-    						new PreemptiveAuthInterceptor(), 0);
-    				return httpclient;
+					sslContext.init(null, new TrustManager[] { new X509TrustManager() {
+						public X509Certificate[] getAcceptedIssuers() {
+							return new X509Certificate[] {};
+						}
 
-    			} catch (Exception e) {
-    				e.printStackTrace();
-    				return null;
-    			}
+						public void checkClientTrusted(X509Certificate[] certs, String authType) {
+						}
 
-    		}
-    	}
-        
-        
-        /**
-         * PreemptiveAuthInterceptor
-         *
-         */
-        private static class PreemptiveAuthInterceptor implements HttpRequestInterceptor {
+						public void checkServerTrusted(X509Certificate[] certs, String authType) {
+						}
+					} }, new SecureRandom());
 
-    		@SuppressWarnings("deprecation")
-    		public void process(final HttpRequest request, final HttpContext context)
-    				throws HttpException, IOException {
-    			AuthState authState = (AuthState) context
-    					.getAttribute(ClientContext.TARGET_AUTH_STATE);
+					SSLSocketFactory sf = new SSLSocketFactory(sslContext,
+							SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
 
-    			// If no auth scheme availalble yet, try to initialize it
-    			// preemptively
-    			if (authState.getAuthScheme() == null) {
-    				CredentialsProvider credsProvider = (CredentialsProvider) context
-    						.getAttribute(ClientContext.CREDS_PROVIDER);
-    				HttpHost targetHost = (HttpHost) context
-    						.getAttribute(ExecutionContext.HTTP_TARGET_HOST);
-    				Credentials creds = credsProvider.getCredentials(new AuthScope(
-    						targetHost.getHostName(), targetHost.getPort()));
-    				if (creds == null)
-    					throw new HttpException(
-    							"No credentials for preemptive authentication");
-    				authState.setAuthScheme(new BasicScheme());
-    				authState.setCredentials(creds);
-    			}
+					Scheme httpsScheme = new Scheme("https", 443, sf);
+					SchemeRegistry schemeRegistry = new SchemeRegistry();
+					schemeRegistry.register(httpsScheme);
 
-    		}
+					BasicClientConnectionManager cm = new BasicClientConnectionManager(
+							schemeRegistry);
 
-    	}
-        
-    }
-    
+					DefaultHttpClient httpclient = new DefaultHttpClient(cm);
+
+					httpclient.getCredentialsProvider().setCredentials(
+							AuthScope.ANY,
+							new UsernamePasswordCredentials(cloudProviderAccount.getLogin(),
+									cloudProviderAccount.getPassword()));
+					httpclient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0);
+					return httpclient;
+
+				} catch (Exception e) {
+					e.printStackTrace();
+					return null;
+				}
+
+			}
+		}
+
+		/**
+		 * Class used to process HTTP request
+		 */
+		private static class PreemptiveAuthInterceptor implements HttpRequestInterceptor {
+
+			public void process(final HttpRequest request, final HttpContext context)
+					throws HttpException, IOException {
+				AuthState authState = (AuthState) context
+						.getAttribute(ClientContext.TARGET_AUTH_STATE);
+
+				// If no auth scheme availalble yet, try to initialize it
+				// preemptively
+				if (authState.getAuthScheme() == null) {
+					CredentialsProvider credsProvider = (CredentialsProvider) context
+							.getAttribute(ClientContext.CREDS_PROVIDER);
+					HttpHost targetHost = (HttpHost) context
+							.getAttribute(ExecutionContext.HTTP_TARGET_HOST);
+					Credentials creds = credsProvider.getCredentials(new AuthScope(targetHost
+							.getHostName(), targetHost.getPort()));
+					if (creds == null)
+						throw new HttpException("No credentials for preemptive authentication");
+					authState.update(new BasicScheme(), creds);
+				}
+
+			}
+
+		}
+
+	}
+
 }
