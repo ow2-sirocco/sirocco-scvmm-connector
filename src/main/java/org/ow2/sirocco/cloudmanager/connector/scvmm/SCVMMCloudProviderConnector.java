@@ -239,12 +239,6 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 	}
 
 	@Override
-	public void deleteForwardingGroup(final String forwardingGroupId, final ProviderTarget target)
-			throws ConnectorException {
-		throw new ConnectorException("unsupported operation");
-	}
-
-	@Override
 	public void addNetworkToForwardingGroup(final String forwardingGroupId,
 			final ForwardingGroupNetwork fgNetwork, final ProviderTarget target)
 			throws ConnectorException {
@@ -1410,6 +1404,13 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 
 		}
 
+	}
+
+	@Override
+	public void deleteForwardingGroup(ForwardingGroup arg0, ProviderTarget arg1)
+			throws ResourceNotFoundException, ConnectorException {
+		// TODO Auto-generated method stub
+		
 	}
 
 }
