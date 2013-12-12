@@ -74,6 +74,7 @@ import org.slf4j.LoggerFactory;
 
 import com.msopentech.odatajclient.engine.client.http.HttpClientFactory;
 import com.msopentech.odatajclient.engine.client.http.HttpMethod;
+import com.msopentech.odatajclient.engine.communication.ODataClientErrorException;
 import com.msopentech.odatajclient.engine.communication.request.UpdateType;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataCUDRequestFactory;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataDeleteRequest;
@@ -754,8 +755,10 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 		 * @param machineId
 		 * @return the machine requested by its ID
 		 * @throws ResourceNotFoundException if the requested machine does not exist
+		 * @throws ODataClientErrorException if a client error in OData occurs
 		 */
-		public Machine getMachine(final String machineId) throws ResourceNotFoundException {
+		public Machine getMachine(final String machineId) throws ResourceNotFoundException,
+				ODataClientErrorException {
 			logger.info("Getting machine (ID=" + machineId + ")");
 
 			Map<String, Object> key = new HashMap<String, Object>();
@@ -768,18 +771,23 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 					.build());
 			req.setFormat(ODataPubFormat.ATOM);
 
-			final ODataRetrieveResponse<ODataEntity> res = req.execute();
+			try {
+				final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
-			if (res.getStatusCode() == 404) {
-				throw new ResourceNotFoundException("Machine with id " + machineId
-						+ " does not exist");
+				ODataEntity machine = res.getBody();
+				logger.info("Machine requested: " + "ID=" + machine.getProperty("ID").getValue()
+						+ ", " + "Name=" + machine.getProperty("Name").getValue());
+
+				return fromODataVMToMachine(machine);
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of not founding machine
+				if (e.getStatusLine().getStatusCode() == 404) {
+					throw new ResourceNotFoundException("Machine with id " + machineId
+							+ " does not exist");
+				}
+				throw e;
 			}
-
-			ODataEntity machine = res.getBody();
-			logger.info("Machine requested: " + "ID=" + machine.getProperty("ID").getValue() + ", "
-					+ "Name=" + machine.getProperty("Name").getValue());
-
-			return fromODataVMToMachine(machine);
 		}
 
 		public void addVolumeToMachine(final String machineId, final MachineVolume machineVolume)
@@ -895,7 +903,7 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 
 				result.add(machineImage);
 			}
-			
+
 			logger.info("Number of machine images: " + result.size());
 
 			return result;
@@ -948,7 +956,7 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 			for (ODataEntity entity : entitySet.getEntities()) {
 				result.add(fromODataNetworkToCimiNetwork(entity));
 			}
-			
+
 			logger.info("Number of networks: " + result.size());
 
 			return result;
@@ -1195,14 +1203,16 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 		private Network fromODataNetworkAdapterToCimiNetwork(ODataEntity odataNetworkAdapter) {
 			Network cimiNetwork = new Network();
 			// set network name
-			cimiNetwork.setName(odataNetworkAdapter.getProperty("VMNetworkName").getValue().toString());
-			// set network id
-			cimiNetwork.setProviderAssignedId(odataNetworkAdapter.getProperty("VMNetworkId").getValue()
+			cimiNetwork.setName(odataNetworkAdapter.getProperty("VMNetworkName").getValue()
 					.toString());
+			// set network id
+			cimiNetwork.setProviderAssignedId(odataNetworkAdapter.getProperty("VMNetworkId")
+					.getValue().toString());
 			// TODO set network state
 
 			// set network type
-			if (odataNetworkAdapter.getProperty("Accessibility").getValue().toString().equals("Public")) {
+			if (odataNetworkAdapter.getProperty("Accessibility").getValue().toString().equals(
+					"Public")) {
 				cimiNetwork.setNetworkType(Network.Type.PUBLIC);
 			} else {
 				cimiNetwork.setNetworkType(Network.Type.PRIVATE);
@@ -1214,14 +1224,13 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 
 			return cimiNetwork;
 		}
-		
+
 		private Network fromODataNetworkToCimiNetwork(ODataEntity odataNetwork) {
 			Network cimiNetwork = new Network();
 			// set network name
 			cimiNetwork.setName(odataNetwork.getProperty("Name").getValue().toString());
 			// set network id
-			cimiNetwork.setProviderAssignedId(odataNetwork.getProperty("ID").getValue()
-					.toString());
+			cimiNetwork.setProviderAssignedId(odataNetwork.getProperty("ID").getValue().toString());
 			// TODO set network state
 			cimiNetwork.setState(Network.State.STARTED);
 			// TODO set network type
@@ -1410,7 +1419,7 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 	public void deleteForwardingGroup(ForwardingGroup arg0, ProviderTarget arg1)
 			throws ResourceNotFoundException, ConnectorException {
 		// TODO Auto-generated method stub
-		
+
 	}
 
 }
