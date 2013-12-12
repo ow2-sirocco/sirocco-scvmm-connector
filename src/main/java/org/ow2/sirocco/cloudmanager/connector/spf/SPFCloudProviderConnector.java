@@ -98,6 +98,10 @@ import com.msopentech.odatajclient.engine.format.ODataPubFormat;
 import com.msopentech.odatajclient.engine.uri.ODataURIBuilder;
 import com.msopentech.odatajclient.engine.utils.Configuration;
 
+/**
+ * Cloud provider connector for Microsoft Service Provider Foundation
+ * 
+ */
 public class SPFCloudProviderConnector implements ICloudProviderConnector, IComputeService,
 		IVolumeService, INetworkService, IImageService {
 	private static Logger logger = LoggerFactory.getLogger(SPFCloudProviderConnector.class);
@@ -236,6 +240,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public ForwardingGroup getForwardingGroup(final String forwardingGroupId,
 			final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void deleteForwardingGroup(ForwardingGroup arg0, ProviderTarget arg1)
+			throws ResourceNotFoundException, ConnectorException {
 		throw new ConnectorException("unsupported operation");
 	}
 
@@ -398,7 +408,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	}
 
 	/**
-	 * SPFProvider
+	 * Provider for Microsoft Service Provider Foundation
+	 * 
 	 */
 	private static class SPFProvider {
 
@@ -509,7 +520,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * @param machineCreate - virtual machine configuration
 		 * @return the virtual machine created
 		 * @throws ResourceNotFoundException if cannot find machine image
-		 * @throws ConnectorException if creating the machine failed
+		 * @throws ConnectorException if machine creation failed
 		 */
 		public Machine createMachine(final MachineCreate machineCreate)
 				throws ResourceNotFoundException, ConnectorException {
@@ -720,9 +731,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * @param machineId
 		 * @return the machine state requested by its ID
 		 * @throws ResourceNotFoundException if the requested machine does not exist
+		 * @throws ConnectorException if a client error in OData occurs
 		 */
 		public Machine.State getMachineState(final String machineId)
-				throws ResourceNotFoundException {
+				throws ResourceNotFoundException, ConnectorException {
 			logger.info("Getting machine state (ID=" + machineId + ")");
 
 			Map<String, Object> key = new HashMap<String, Object>();
@@ -736,18 +748,23 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.build());
 			req.setFormat(ODataPubFormat.ATOM);
 
-			final ODataRetrieveResponse<ODataEntity> res = req.execute();
+			try {
+				final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
-			if (res.getStatusCode() == 404) {
-				throw new ResourceNotFoundException("Machine with id " + machineId
-						+ " does not exist");
+				ODataEntity machine = res.getBody();
+				String status = machine.getProperty("Status").getValue().toString();
+				logger.info("Machine state: " + status + " (ID=" + machineId + ")");
+
+				return fromODataVMStatusToMachineState(status);
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of not founding machine
+				if (e.getStatusLine().getStatusCode() == 404) {
+					throw new ResourceNotFoundException("Machine with id " + machineId
+							+ " does not exist");
+				}
+				throw new ConnectorException(e);
 			}
-
-			ODataEntity machine = res.getBody();
-			String status = machine.getProperty("Status").getValue().toString();
-			logger.info("Machine state: " + status + " (ID=" + machineId + ")");
-
-			return fromODataVMStatusToMachineState(status);
 		}
 
 		/**
@@ -755,10 +772,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * @param machineId
 		 * @return the machine requested by its ID
 		 * @throws ResourceNotFoundException if the requested machine does not exist
-		 * @throws ODataClientErrorException if a client error in OData occurs
+		 * @throws ConnectorException if a client error in OData occurs
 		 */
 		public Machine getMachine(final String machineId) throws ResourceNotFoundException,
-				ODataClientErrorException {
+				ConnectorException {
 			logger.info("Getting machine (ID=" + machineId + ")");
 
 			Map<String, Object> key = new HashMap<String, Object>();
@@ -786,7 +803,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					throw new ResourceNotFoundException("Machine with id " + machineId
 							+ " does not exist");
 				}
-				throw e;
+				throw new ConnectorException(e);
 			}
 		}
 
@@ -803,7 +820,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		//
 
 		public Volume createVolume(final VolumeCreate volumeCreate) throws ConnectorException {
-			// TODO
 			throw new ConnectorException("unsupported operation");
 		}
 
@@ -811,7 +827,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		public State getVolumeState(final String volumeId) throws ConnectorException {
-			// TODO
 			throw new ConnectorException("unsupported operation");
 		}
 
@@ -873,8 +888,14 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 		 */
 
+		/**
+		 * Returns all VMM virtual machine templates
+		 * @param returnAccountImagesOnly - never used
+		 * @param searchCriteria - never used
+		 * @return a list of all virtual machine templates
+		 */
 		public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
-				final Map<String, String> searchCriteria) throws ConnectorException {
+				final Map<String, String> searchCriteria) {
 			logger.info("Getting machine images");
 
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
@@ -936,8 +957,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		/**
-		 * Returns all VMM networks
-		 * @return a list of all existing networks
+		 * Returns all VMM virtual networks
+		 * @return a list of all existing virtual networks
 		 */
 		public List<Network> getNetworks() {
 			logger.info("Getting networks");
@@ -968,8 +989,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Queries Stamp identifier depending on cloud name
-		 * @return Stamp identifier
-		 * @throws ConnectorException if cannot find StampId with the given cloud name
+		 * @return Stamp identifier, or null if cannot find StampId with the given cloud name
 		 */
 		private final String getStampId() {
 			String cloudName = cloudProviderAccount.getProperties().get("cloudName");
@@ -996,9 +1016,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * Retrieves cloud identifier with its name
 		 * @param cloudName - cloud identified name
 		 * @return cloud identifier depending on the cloud name passed as a parameter
-		 * @throws ResourceNotFoundException if cloud does not exist
+		 * @throws ResourceNotFoundException if the requested cloud does not exist
+		 * @throws ConnectorException if a client error in OData occurs
 		 */
-		private String getCloudIdFromName(String cloudName) throws ResourceNotFoundException {
+		private String getCloudIdFromName(String cloudName) throws ResourceNotFoundException,
+				ConnectorException {
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("Clouds").filter("Name eq '" + cloudName + "'")
 					.select("ID");
@@ -1007,21 +1029,30 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
 
-			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			if (res.getStatusCode() == 404) {
-				throw new ResourceNotFoundException("Cloud '" + cloudName + "'does not exist");
-			}
+			try {
+				final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
 
-			return res.getBody().getEntities().get(0).getProperties().get(0).getValue().toString();
+				return res.getBody().getEntities().get(0).getProperties().get(0).getValue()
+						.toString();
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of not founding cloud
+				if (e.getStatusLine().getStatusCode() == 404) {
+					throw new ResourceNotFoundException("Cloud '" + cloudName + "'does not exist");
+				}
+				throw new ConnectorException(e);
+			}
 		}
 
 		/**
 		 * Retrieves network name with its identifier
 		 * @param networkId - network identifier
 		 * @return network name depending on the network identifier passed as a parameter
-		 * @throws ResourceNotFoundException if network does not exist
+		 * @throws ResourceNotFoundException if the requested network does not exist
+		 * @throws ConnectorException if a client error in OData occurs
 		 */
-		private String getNetworkNameFromId(String networkId) throws ResourceNotFoundException {
+		private String getNetworkNameFromId(String networkId) throws ResourceNotFoundException,
+				ConnectorException {
 			Map<String, Object> key = new HashMap<String, Object>();
 			key.put("ID", UUID.fromString(networkId));
 			key.put("StampId", UUID.fromString(stampId));
@@ -1032,12 +1063,19 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.build());
 			req.setFormat(ODataPubFormat.ATOM);
 
-			final ODataRetrieveResponse<ODataEntity> res = req.execute();
-			if (res.getStatusCode() == 404) {
-				throw new ResourceNotFoundException("Network does not exist with ID=" + networkId);
-			}
+			try {
+				final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
-			return res.getBody().getProperties().get(0).getValue().toString();
+				return res.getBody().getProperties().get(0).getValue().toString();
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of not founding network
+				if (e.getStatusLine().getStatusCode() == 404) {
+					throw new ResourceNotFoundException("Network does not exist with ID="
+							+ networkId);
+				}
+				throw new ConnectorException(e);
+			}
 		}
 
 		/**
@@ -1045,9 +1083,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * user name and an identifier.
 		 * @param userName - user identified name
 		 * @return user role name depending on the user name passed as a parameter
-		 * @throws ResourceNotFoundException if user does not exist
+		 * @throws ResourceNotFoundException if the requested user does not exist
+		 * @throws ConnectorException if a client error in OData occurs
 		 */
-		private String getRoleNameFromUserName(String userName) throws ResourceNotFoundException {
+		private String getRoleNameFromUserName(String userName) throws ResourceNotFoundException,
+				ConnectorException {
 			// user role maximum length is 64 characters and identifier
 			// length is 36 characters so user name is truncated if its
 			// length is over than 27 characters
@@ -1063,12 +1103,19 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
 
-			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			if (res.getStatusCode() == 404) {
-				throw new ResourceNotFoundException("User '" + userName + "'does not exist");
-			}
+			try {
+				final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
 
-			return res.getBody().getEntities().get(0).getProperties().get(0).getValue().toString();
+				return res.getBody().getEntities().get(0).getProperties().get(0).getValue()
+						.toString();
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of not founding user
+				if (e.getStatusLine().getStatusCode() == 404) {
+					throw new ResourceNotFoundException("User '" + userName + "'does not exist");
+				}
+				throw new ConnectorException(e);
+			}
 		}
 
 		/**
@@ -1200,6 +1247,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return machine;
 		}
 
+		/**
+		 * Maps a virtual network adapter OData entity to a network Sirocco object
+		 * @param odataNetworkAdapter - a 'VirtualNetworkAdapter' OData entity
+		 * @return a Network object mapped from OData entity parameter
+		 */
 		private Network fromODataNetworkAdapterToCimiNetwork(ODataEntity odataNetworkAdapter) {
 			Network cimiNetwork = new Network();
 			// set network name
@@ -1225,6 +1277,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return cimiNetwork;
 		}
 
+		/**
+		 * Maps a virtual network OData entity to a network Sirocco object
+		 * @param odataNetwork - a 'VMNetwork' OData entity
+		 * @return a Network object mapped from OData entity parameter
+		 */
 		private Network fromODataNetworkToCimiNetwork(ODataEntity odataNetwork) {
 			Network cimiNetwork = new Network();
 			// set network name
@@ -1341,7 +1398,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		private class SimpleHttpsClientFactory implements HttpClientFactory {
 
 			public HttpClient createHttpClient(final HttpMethod method, final URI uri) {
-
 				SSLContext sslContext = null;
 				try {
 					sslContext = SSLContext.getInstance("SSL");
@@ -1381,8 +1437,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					e.printStackTrace();
 					return null;
 				}
-
 			}
+
 		}
 
 		/**
@@ -1408,17 +1464,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 						throw new HttpException("No credentials for preemptive authentication");
 					authState.update(new BasicScheme(), creds);
 				}
-
 			}
 
 		}
-
-	}
-
-	@Override
-	public void deleteForwardingGroup(ForwardingGroup arg0, ProviderTarget arg1)
-			throws ResourceNotFoundException, ConnectorException {
-		// TODO Auto-generated method stub
 
 	}
 
