@@ -110,7 +110,7 @@ public class CloudProviderConnectorTest {
 		System.setProperty("test.endpoint", "https://10.197.178.16:8090/SC2012/vmm/microsoft.management.odata.svc/");
 		System.setProperty("test.login", "ocw");
 		System.setProperty("test.password", "ocw.2013");
-		System.setProperty("test.provider", "SCVMM");
+		System.setProperty("test.provider", "SPF");
     	
         this.providerName = System.getProperty("test.provider");
         if (this.providerName == null) {

@@ -1,4 +1,4 @@
-package org.ow2.sirocco.cloudmanager.connector.scvmm;
+package org.ow2.sirocco.cloudmanager.connector.spf;
 
 import java.io.IOException;
 import java.net.URI;
@@ -98,14 +98,14 @@ import com.msopentech.odatajclient.engine.format.ODataPubFormat;
 import com.msopentech.odatajclient.engine.uri.ODataURIBuilder;
 import com.msopentech.odatajclient.engine.utils.Configuration;
 
-public class SCVMMCloudProviderConnector implements ICloudProviderConnector, IComputeService,
+public class SPFCloudProviderConnector implements ICloudProviderConnector, IComputeService,
 		IVolumeService, INetworkService, IImageService {
-	private static Logger logger = LoggerFactory.getLogger(SCVMMCloudProviderConnector.class);
+	private static Logger logger = LoggerFactory.getLogger(SPFCloudProviderConnector.class);
 
-	private List<SCVMMProvider> providers = new ArrayList<SCVMMProvider>();
+	private List<SPFProvider> providers = new ArrayList<SPFProvider>();
 
-	private synchronized SCVMMProvider getProvider(final ProviderTarget target) {
-		for (SCVMMProvider provider : this.providers) {
+	private synchronized SPFProvider getProvider(final ProviderTarget target) {
+		for (SPFProvider provider : this.providers) {
 			if (provider.cloudProviderAccount.getId().equals(target.getAccount().getId())) {
 				// location can be null?
 				if (provider.cloudProviderLocation != target.getLocation()) {
@@ -121,7 +121,7 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 			}
 		}
 
-		SCVMMProvider provider = new SCVMMProvider(target.getAccount(), target.getLocation());
+		SPFProvider provider = new SPFProvider(target.getAccount(), target.getLocation());
 		this.providers.add(provider);
 		return provider;
 	}
@@ -398,9 +398,9 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 	}
 
 	/**
-	 * SCVMMProvider
+	 * SPFProvider
 	 */
-	private static class SCVMMProvider {
+	private static class SPFProvider {
 
 		public enum MachineAction {
 			START("Start"),
@@ -431,7 +431,7 @@ public class SCVMMCloudProviderConnector implements ICloudProviderConnector, ICo
 
 		private final String stampId;
 
-		public SCVMMProvider(final CloudProviderAccount cloudProviderAccount,
+		public SPFProvider(final CloudProviderAccount cloudProviderAccount,
 				final CloudProviderLocation cloudProviderLocation) {
 			this.cloudProviderAccount = cloudProviderAccount;
 			this.cloudProviderLocation = cloudProviderLocation;
