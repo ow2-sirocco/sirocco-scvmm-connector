@@ -35,6 +35,7 @@ import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.conn.BasicClientConnectionManager;
 import org.apache.http.protocol.ExecutionContext;
 import org.apache.http.protocol.HttpContext;
+import org.ow2.sirocco.cloudmanager.connector.api.BadStateException;
 import org.ow2.sirocco.cloudmanager.connector.api.ConnectorException;
 import org.ow2.sirocco.cloudmanager.connector.api.ICloudProviderConnector;
 import org.ow2.sirocco.cloudmanager.connector.api.IComputeService;
@@ -76,6 +77,7 @@ import org.slf4j.LoggerFactory;
 import com.msopentech.odatajclient.engine.client.http.HttpClientFactory;
 import com.msopentech.odatajclient.engine.client.http.HttpMethod;
 import com.msopentech.odatajclient.engine.communication.ODataClientErrorException;
+import com.msopentech.odatajclient.engine.communication.ODataServerErrorException;
 import com.msopentech.odatajclient.engine.communication.request.UpdateType;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataCUDRequestFactory;
 import com.msopentech.odatajclient.engine.communication.request.cud.ODataDeleteRequest;
@@ -1222,9 +1224,14 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				nic.setNetwork(fromODataNetworkAdapterToCimiNetwork(odataNetwork));
 
 				// set addresses
-				nic.setAddresses(getIPAddresses(machineId, odataNetwork.getProperty(
-						"IPv4AddressType").getValue().toString(), odataNetwork.getProperty(
-						"IPv6AddressType").getValue().toString()));
+				try {
+					nic.setAddresses(getIPAddresses(machineId, odataNetwork.getProperty(
+							"IPv4AddressType").getValue().toString(), odataNetwork.getProperty(
+							"IPv6AddressType").getValue().toString()));
+				} catch (BadStateException e) {
+					logger.warn(e.getMessage());
+					nic.setAddresses(new ArrayList<MachineNetworkInterfaceAddress>());
+				}
 
 				// TODO set state
 				nic.setState(MachineNetworkInterface.InterfaceState.ACTIVE);
@@ -1256,12 +1263,15 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 */
 		private Network fromODataNetworkAdapterToCimiNetwork(ODataEntity odataNetworkAdapter) {
 			Network cimiNetwork = new Network();
+
 			// set network name
 			cimiNetwork.setName(odataNetworkAdapter.getProperty("VMNetworkName").getValue()
 					.toString());
+
 			// set network id
 			cimiNetwork.setProviderAssignedId(odataNetworkAdapter.getProperty("VMNetworkId")
 					.getValue().toString());
+
 			// TODO set network state
 			cimiNetwork.setState(Network.State.STARTED);
 
@@ -1273,9 +1283,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				cimiNetwork.setNetworkType(Network.Type.PRIVATE);
 			}
 
-			// TODO set network subnets
-			List<Subnet> subnets = new ArrayList<Subnet>();
-			cimiNetwork.setSubnets(subnets);
+			// set network subnets
+			cimiNetwork.setSubnets(getSubnets(cimiNetwork.getProviderAssignedId()));
 
 			return cimiNetwork;
 		}
@@ -1295,9 +1304,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			cimiNetwork.setState(Network.State.STARTED);
 			// TODO set network type
 			cimiNetwork.setNetworkType(Network.Type.PUBLIC);
-			// TODO set network subnets
-			List<Subnet> subnets = new ArrayList<Subnet>();
-			cimiNetwork.setSubnets(subnets);
+			// set network subnets
+			cimiNetwork.setSubnets(getSubnets(cimiNetwork.getProviderAssignedId()));
 
 			return cimiNetwork;
 		}
@@ -1396,7 +1404,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		private List<MachineNetworkInterfaceAddress> getIPAddresses(String machineId,
-				String ipv4AllocationType, String ipv6AllocationType) {
+				String ipv4AllocationType, String ipv6AllocationType) throws BadStateException {
 			Map<String, Object> key = new HashMap<String, Object>();
 			key.put("VMId", UUID.fromString(machineId));
 			key.put("StampId", UUID.fromString(stampId));
@@ -1407,36 +1415,66 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.build());
 			req.setFormat(ODataPubFormat.ATOM);
 
-			final ODataRetrieveResponse<ODataEntity> res = req.execute();
-			final ODataEntity entity = res.getBody();
+			try {
+				final ODataRetrieveResponse<ODataEntity> res = req.execute();
+				final ODataEntity entity = res.getBody();
 
-			List<MachineNetworkInterfaceAddress> nicAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
-			// IPv4Addresses
-			String[] ipv4Addresses = entity.getProperty("IPv4Addresses").getValue().toString()
-					.split(";");
-			for (String ipv4Address : ipv4Addresses) {
-				MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
-				Address address = new Address();
-				address.setIp(ipv4Address);
-				address.setProtocol("IPv4");
-				address.setAllocation(ipv4AllocationType);
-				nicAddress.setAddress(address);
-				nicAddresses.add(nicAddress);
+				List<MachineNetworkInterfaceAddress> nicAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
+				// IPv4Addresses
+				String[] ipv4Addresses = entity.getProperty("IPv4Addresses").getValue().toString()
+						.split(";");
+				for (String ipv4Address : ipv4Addresses) {
+					MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
+					Address address = new Address();
+					address.setIp(ipv4Address);
+					address.setProtocol("IPv4");
+					address.setAllocation(ipv4AllocationType);
+					nicAddress.setAddress(address);
+					nicAddresses.add(nicAddress);
+				}
+				// IPv6Addresses
+				String[] ipv6Addresses = entity.getProperty("IPv6Addresses").getValue().toString()
+						.split(";");
+				for (String ipv6Address : ipv6Addresses) {
+					MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
+					Address address = new Address();
+					address.setIp(ipv6Address);
+					address.setProtocol("IPv6");
+					address.setAllocation(ipv6AllocationType);
+					nicAddress.setAddress(address);
+					nicAddresses.add(nicAddress);
+				}
+
+				return nicAddresses;
+			} catch (ODataServerErrorException e) {
+				throw new BadStateException("The virtual machine is not running (ID=" + machineId
+						+ ")", e);
 			}
-			// IPv6Addresses
-			String[] ipv6Addresses = entity.getProperty("IPv6Addresses").getValue().toString()
-					.split(";");
-			for (String ipv6Address : ipv6Addresses) {
-				MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
-				Address address = new Address();
-				address.setIp(ipv6Address);
-				address.setProtocol("IPv6");
-				address.setAllocation(ipv6AllocationType);
-				nicAddress.setAddress(address);
-				nicAddresses.add(nicAddress);
+		}
+
+		private List<Subnet> getSubnets(String networkId) {
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMSubnets").filter(
+							"StampId eq guid'" + stampId + "' and VMNetworkId eq guid'" + networkId
+									+ "'");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+
+			List<Subnet> subnets = new ArrayList<Subnet>();
+			for (ODataEntity entity : entitySet.getEntities()) {
+				Subnet subnet = new Subnet();
+				subnet.setName(entity.getProperty("Name").getValue().toString());
+				subnet.setCidr(entity.getProperty("Subnet").getValue().toString());
+				subnet.setProviderAssignedId(entity.getProperty("ID").getValue().toString());
+				subnets.add(subnet);
 			}
 
-			return nicAddresses;
+			return subnets;
 		}
 
 		/**
