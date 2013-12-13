@@ -1240,19 +1240,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			}
 			machine.setNetworkInterfaces(nics);
 
-			// TODO set volumes
-			List<MachineVolume> machineVolumes = new ArrayList<MachineVolume>();
-			// /TODO set volume
-			// //TODO set name
-			// //TODO set description ?
-			// //TODO set provider assign id
-			// //TODO set state
-			// //TODO set capacity
-			// /TODO set provider assign id
-			// /TODO set state
-			// /TODO set initial location
-			machine.setVolumes(machineVolumes);
-
 			return machine;
 		}
 
