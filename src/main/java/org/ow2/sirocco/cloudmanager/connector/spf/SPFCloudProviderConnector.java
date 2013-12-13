@@ -44,6 +44,7 @@ import org.ow2.sirocco.cloudmanager.connector.api.ISystemService;
 import org.ow2.sirocco.cloudmanager.connector.api.IVolumeService;
 import org.ow2.sirocco.cloudmanager.connector.api.ProviderTarget;
 import org.ow2.sirocco.cloudmanager.connector.api.ResourceNotFoundException;
+import org.ow2.sirocco.cloudmanager.model.cimi.Address;
 import org.ow2.sirocco.cloudmanager.model.cimi.DiskTemplate;
 import org.ow2.sirocco.cloudmanager.model.cimi.ForwardingGroup;
 import org.ow2.sirocco.cloudmanager.model.cimi.ForwardingGroupCreate;
@@ -1220,9 +1221,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				// set network
 				nic.setNetwork(fromODataNetworkAdapterToCimiNetwork(odataNetwork));
 
-				// TODO set addresses
-				List<MachineNetworkInterfaceAddress> cimiAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
-				nic.setAddresses(cimiAddresses);
+				// set addresses
+				nic.setAddresses(getIPAddresses(machineId, odataNetwork.getProperty(
+						"IPv4AddressType").getValue().toString(), odataNetwork.getProperty(
+						"IPv6AddressType").getValue().toString()));
 
 				// TODO set state
 				nic.setState(MachineNetworkInterface.InterfaceState.ACTIVE);
@@ -1261,6 +1263,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			cimiNetwork.setProviderAssignedId(odataNetworkAdapter.getProperty("VMNetworkId")
 					.getValue().toString());
 			// TODO set network state
+			cimiNetwork.setState(Network.State.STARTED);
 
 			// set network type
 			if (odataNetworkAdapter.getProperty("Accessibility").getValue().toString().equals(
@@ -1390,6 +1393,50 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
 			return res.getBody();
+		}
+
+		private List<MachineNetworkInterfaceAddress> getIPAddresses(String machineId,
+				String ipv4AllocationType, String ipv6AllocationType) {
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("VMId", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("GuestInfos").appendKeySegment(key);
+
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntity> res = req.execute();
+			final ODataEntity entity = res.getBody();
+
+			List<MachineNetworkInterfaceAddress> nicAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
+			// IPv4Addresses
+			String[] ipv4Addresses = entity.getProperty("IPv4Addresses").getValue().toString()
+					.split(";");
+			for (String ipv4Address : ipv4Addresses) {
+				MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
+				Address address = new Address();
+				address.setIp(ipv4Address);
+				address.setProtocol("IPv4");
+				address.setAllocation(ipv4AllocationType);
+				nicAddress.setAddress(address);
+				nicAddresses.add(nicAddress);
+			}
+			// IPv6Addresses
+			String[] ipv6Addresses = entity.getProperty("IPv6Addresses").getValue().toString()
+					.split(";");
+			for (String ipv6Address : ipv6Addresses) {
+				MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
+				Address address = new Address();
+				address.setIp(ipv6Address);
+				address.setProtocol("IPv6");
+				address.setAllocation(ipv6AllocationType);
+				nicAddress.setAddress(address);
+				nicAddresses.add(nicAddress);
+			}
+
+			return nicAddresses;
 		}
 
 		/**
