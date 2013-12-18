@@ -618,6 +618,22 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			machineConfig.addProperty(ODataFactory.newComplexProperty("Owner", owner));
 
+			// add credential (user name)
+			String adminUserName = machineCreate.getMachineTemplate().getCredential().getUserName();
+			if (adminUserName != null) {
+				machineConfig.addProperty(ODataFactory.newPrimitiveProperty("LocalAdminUserName",
+						new ODataPrimitiveValue.Builder().setText(adminUserName).setType(
+								EdmSimpleType.String).build()));
+			}
+
+			// add credential (password)
+			String adminPassword = machineCreate.getMachineTemplate().getCredential().getPassword();
+			if (adminPassword != null) {
+				machineConfig.addProperty(ODataFactory.newPrimitiveProperty("LocalAdminPassword",
+						new ODataPrimitiveValue.Builder().setText(adminPassword).setType(
+								EdmSimpleType.String).build()));
+			}
+
 			// create and execute request
 			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
 					.getEntityCreateRequest(uriBuilder.build(), machineConfig);
