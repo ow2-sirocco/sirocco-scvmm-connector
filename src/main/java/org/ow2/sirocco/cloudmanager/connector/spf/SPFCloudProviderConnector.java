@@ -619,19 +619,23 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			machineConfig.addProperty(ODataFactory.newComplexProperty("Owner", owner));
 
 			// add credential (user name)
-			String adminUserName = machineCreate.getMachineTemplate().getCredential().getUserName();
-			if (adminUserName != null) {
+			try {
 				machineConfig.addProperty(ODataFactory.newPrimitiveProperty("LocalAdminUserName",
-						new ODataPrimitiveValue.Builder().setText(adminUserName).setType(
-								EdmSimpleType.String).build()));
+						new ODataPrimitiveValue.Builder().setText(
+								machineCreate.getMachineTemplate().getCredential().getUserName())
+								.setType(EdmSimpleType.String).build()));
+			} catch (NullPointerException e) {
+				// nothing to do
 			}
 
 			// add credential (password)
-			String adminPassword = machineCreate.getMachineTemplate().getCredential().getPassword();
-			if (adminPassword != null) {
+			try {
 				machineConfig.addProperty(ODataFactory.newPrimitiveProperty("LocalAdminPassword",
-						new ODataPrimitiveValue.Builder().setText(adminPassword).setType(
-								EdmSimpleType.String).build()));
+						new ODataPrimitiveValue.Builder().setText(
+								machineCreate.getMachineTemplate().getCredential().getPassword())
+								.setType(EdmSimpleType.String).build()));
+			} catch (NullPointerException e) {
+				// nothing to do
 			}
 
 			// create and execute request
@@ -1232,6 +1236,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			machine.setDisks(machineDisks);
 
 			// set nics
+			boolean ipAddressesUnavailable = false;
 			List<MachineNetworkInterface> nics = new ArrayList<MachineNetworkInterface>();
 			for (ODataEntity odataNetwork : getVirtualNetworkAdapters(machineId).getEntities()) {
 				MachineNetworkInterface nic = new MachineNetworkInterface();
@@ -1249,12 +1254,23 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					nic.setAddresses(new ArrayList<MachineNetworkInterfaceAddress>());
 				}
 
+				// update boolean used after to update machine state
+				if (nic.getAddresses().isEmpty()) {
+					ipAddressesUnavailable = true;
+				}
+
 				// TODO set state
 				nic.setState(MachineNetworkInterface.InterfaceState.ACTIVE);
 
 				nics.add(nic);
 			}
 			machine.setNetworkInterfaces(nics);
+
+			// if machine state is STARTED but its IP addresses are not yet available, then its
+			// state is set to STARTING
+			if (machine.getState().equals(Machine.State.STARTED) && ipAddressesUnavailable) {
+				machine.setState(Machine.State.STARTING);
+			}
 
 			return machine;
 		}
