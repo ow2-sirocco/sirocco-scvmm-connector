@@ -71,6 +71,9 @@ import org.ow2.sirocco.cloudmanager.model.cimi.VolumeImage;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderAccount;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderLocation;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.ProviderMapping;
+import org.ow2.sirocco.cloudmanager.model.cimi.extension.SecurityGroup;
+import org.ow2.sirocco.cloudmanager.model.cimi.extension.SecurityGroupCreate;
+import org.ow2.sirocco.cloudmanager.model.cimi.extension.SecurityGroupRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -262,6 +265,69 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public void removeNetworkFromForwardingGroup(final String forwardingGroupId,
 			final String networkId, final ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+	
+	@Override
+	public void addAddressToMachine(String machineId, Address address, ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");		
+	}
+
+	@Override
+	public String addRuleToSecurityGroup(String groupId, SecurityGroupRule rule,
+			ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public Address allocateAddress(Map<String, String> properties, ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public String createSecurityGroup(SecurityGroupCreate create, ProviderTarget target)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void deleteAddress(Address address, ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void deleteRuleFromSecurityGroup(String groupId, SecurityGroupRule rule,
+			ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void deleteSecurityGroup(String groupId, ProviderTarget target)
+			throws ResourceNotFoundException, ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public List<Address> getAddresses(ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public SecurityGroup getSecurityGroup(String groupId, ProviderTarget target)
+			throws ResourceNotFoundException, ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public List<SecurityGroup> getSecurityGroups(ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void removeAddressFromMachine(String machineId, Address address, ProviderTarget target)
+			throws ConnectorException {
 		throw new ConnectorException("unsupported operation");
 	}
 
@@ -1257,6 +1323,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				// update boolean used after to update machine state
 				if (nic.getAddresses().isEmpty()) {
 					ipAddressesUnavailable = true;
+					continue;
 				}
 
 				// TODO set state
