@@ -267,11 +267,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final String networkId, final ProviderTarget target) throws ConnectorException {
 		throw new ConnectorException("unsupported operation");
 	}
-	
+
 	@Override
 	public void addAddressToMachine(String machineId, Address address, ProviderTarget target)
 			throws ConnectorException {
-		throw new ConnectorException("unsupported operation");		
+		throw new ConnectorException("unsupported operation");
 	}
 
 	@Override
@@ -511,6 +511,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		private final String stampId;
 
+		/**
+		 * Initializes a SPF provider by instantiating a HTTP client connection with a HTTP request
+		 * processing. It also queries the Stamp identifier
+		 * @param cloudProviderAccount an account on a cloud provider
+		 * @param cloudProviderLocation a geographical location where cloud resources are running
+		 */
 		public SPFProvider(final CloudProviderAccount cloudProviderAccount,
 				final CloudProviderLocation cloudProviderLocation) {
 			this.cloudProviderAccount = cloudProviderAccount;
@@ -586,7 +592,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Creates a virtual machine with the configuration passed as a parameter
-		 * @param machineCreate - virtual machine configuration
+		 * @param machineCreate virtual machine configuration
 		 * @return the virtual machine created
 		 * @throws ResourceNotFoundException if cannot find machine image
 		 * @throws ConnectorException if machine creation failed
@@ -731,7 +737,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Starts a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @throws ConnectorException if starting the machine failed
 		 */
 		public void startMachine(final String machineId) throws ConnectorException {
@@ -740,7 +746,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Stops a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @throws ConnectorException if stopping the machine failed
 		 */
 		public void stopMachine(final String machineId, final boolean force)
@@ -750,7 +756,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Suspends a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @throws ConnectorException if suspending the machine failed
 		 */
 		public void suspendMachine(final String machineId) throws ConnectorException {
@@ -759,7 +765,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Restarts a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @throws ConnectorException if restarting the machine failed
 		 */
 		public void restartMachine(final String machineId, final boolean force)
@@ -769,7 +775,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Pauses a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @throws ConnectorException if pausing the machine failed
 		 */
 		public void pauseMachine(final String machineId) throws ConnectorException {
@@ -783,7 +789,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Deletes a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @throws ConnectorException if the machine deletion failed
 		 */
 		public void deleteMachine(final String machineId) throws ConnectorException {
@@ -817,7 +823,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Returns the state of a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @return the machine state requested by its ID
 		 * @throws ResourceNotFoundException if the requested machine does not exist
 		 * @throws ConnectorException if a client error in OData occurs
@@ -858,7 +864,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Returns a machine defined by its ID
-		 * @param machineId
+		 * @param machineId virtual machine identifier
 		 * @return the machine requested by its ID
 		 * @throws ResourceNotFoundException if the requested machine does not exist
 		 * @throws ConnectorException if a client error in OData occurs
@@ -979,8 +985,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Returns all VMM virtual machine templates
-		 * @param returnAccountImagesOnly - never used
-		 * @param searchCriteria - never used
+		 * @param returnAccountImagesOnly never used
+		 * @param searchCriteria never used
 		 * @return a list of all virtual machine templates
 		 */
 		public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
@@ -1041,8 +1047,48 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return null;
 		}
 
-		public Network createNetwork(final NetworkCreate networkCreate) {
-			return null;
+		public Network createNetwork(final NetworkCreate networkCreate) throws ConnectorException {
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntitySetSegment("VMNetworks");
+
+			ODataEntity networkConfig = ODataFactory.newEntity("VMM.VMNetwork");
+
+			// add stampId
+			networkConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(stampId)).build()));
+
+			// add Name
+			networkConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
+					new ODataPrimitiveValue.Builder().setText(networkCreate.getName()).build()));
+
+			// add LogicalNetworkId
+			networkConfig.addProperty(ODataFactory.newPrimitiveProperty("LogicalNetworkId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(getNetworkAllowingVirtualization())).build()));
+
+			// TODO subnets
+
+			// create and execute request
+			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
+					.getEntityCreateRequest(uriBuilder.build(), networkConfig);
+			createReq.setFormat(ODataPubFormat.ATOM);
+
+			final ODataEntityCreateResponse createRes = createReq.execute();
+
+			// response processing
+			if (createRes.getStatusCode() != 201) {
+				throw new ConnectorException("Network creation failed: "
+						+ createRes.getStatusMessage());
+			}
+
+			networkConfig = createRes.getBody();
+
+			logger.info("Network creation succeed (" + "Name="
+					+ networkConfig.getProperty("Name").getValue() + ", ID="
+					+ networkConfig.getProperty("ID").getValue() + ")");
+
+			return fromODataNetworkToCimiNetwork(networkConfig);
 		}
 
 		/**
@@ -1103,7 +1149,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Retrieves cloud identifier with its name
-		 * @param cloudName - cloud identified name
+		 * @param cloudName cloud identified name
 		 * @return cloud identifier depending on the cloud name passed as a parameter
 		 * @throws ResourceNotFoundException if the requested cloud does not exist
 		 * @throws ConnectorException if a client error in OData occurs
@@ -1135,7 +1181,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Retrieves network name with its identifier
-		 * @param networkId - network identifier
+		 * @param networkId network identifier
 		 * @return network name depending on the network identifier passed as a parameter
 		 * @throws ResourceNotFoundException if the requested network does not exist
 		 * @throws ConnectorException if a client error in OData occurs
@@ -1170,7 +1216,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		/**
 		 * Retrieves user role name with its unique name. A user role is the concatenation of the
 		 * user name and an identifier.
-		 * @param userName - user identified name
+		 * @param userName user identified name
 		 * @return user role name depending on the user name passed as a parameter
 		 * @throws ResourceNotFoundException if the requested user does not exist
 		 * @throws ConnectorException if a client error in OData occurs
@@ -1209,8 +1255,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Controls the virtual machine defined by its ID
-		 * @param machineId - virtual machine identifier
-		 * @param machineAction - action to operate
+		 * @param machineId virtual machine identifier
+		 * @param machineAction action to operate
 		 * @throws ConnectorException if machine action failed
 		 */
 		private void actionMachine(String machineId, MachineAction machineAction)
@@ -1257,7 +1303,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Maps a virtual machine OData entity to a Machine object
-		 * @param entity - a 'VirtualMachine' OData entity
+		 * @param entity a 'VirtualMachine' OData entity
 		 * @return a Machine object mapped from OData entity parameter, or null if the entity is not
 		 *         a virtual machine entity
 		 */
@@ -1344,7 +1390,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Maps a virtual network adapter OData entity to a network Sirocco object
-		 * @param odataNetworkAdapter - a 'VirtualNetworkAdapter' OData entity
+		 * @param odataNetworkAdapter a 'VirtualNetworkAdapter' OData entity
 		 * @return a Network object mapped from OData entity parameter
 		 */
 		private Network fromODataNetworkAdapterToCimiNetwork(ODataEntity odataNetworkAdapter) {
@@ -1377,7 +1423,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Maps a virtual network OData entity to a network Sirocco object
-		 * @param odataNetwork - a 'VMNetwork' OData entity
+		 * @param odataNetwork a 'VMNetwork' OData entity
 		 * @return a Network object mapped from OData entity parameter
 		 */
 		private Network fromODataNetworkToCimiNetwork(ODataEntity odataNetwork) {
@@ -1398,7 +1444,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Maps a virtual machine OData status to a Machine state
-		 * @param status - a virtual machine OData status
+		 * @param status a virtual machine OData status
 		 * @return a Machine state mapped from OData status parameter,
 		 */
 		private Machine.State fromODataVMStatusToMachineState(String status) {
@@ -1448,7 +1494,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Retrieves virtual hard disks of a VM depending on its identifier passed as a parameter
-		 * @param machineId - VM identifier
+		 * @param machineId VM identifier
 		 * @return a set of virtual hard disks of the defined VM
 		 */
 		private ODataEntitySet getVirtualHardDisks(String machineId) {
@@ -1470,7 +1516,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		/**
 		 * Retrieves virtual network adapters of a VM depending on its identifier passed as a
 		 * parameter
-		 * @param machineId - VM identifier
+		 * @param machineId VM identifier
 		 * @return a set of virtual network adapters of the defined VM
 		 */
 		private ODataEntitySet getVirtualNetworkAdapters(String machineId) {
@@ -1561,6 +1607,27 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			}
 
 			return subnets;
+		}
+
+		private String getNetworkAllowingVirtualization() {
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("LogicalNetworks").filter(
+							"StampId eq guid'" + stampId
+									+ "' and NetworkVirtualizationEnabled eq true");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+
+			if (entitySet.getEntities().isEmpty()) {
+				logger.warn("No logical network allowing virtualization detected");
+				return null;
+			} else {
+				return entitySet.getEntities().get(0).getProperty("ID").getValue().toString();
+			}
 		}
 
 		/**
