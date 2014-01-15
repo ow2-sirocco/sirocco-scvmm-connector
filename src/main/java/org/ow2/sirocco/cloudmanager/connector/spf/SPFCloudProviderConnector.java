@@ -1067,8 +1067,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
 							UUID.fromString(getNetworkAllowingVirtualization())).build()));
 
-			// TODO subnets
-
 			// create and execute request
 			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
 					.getEntityCreateRequest(uriBuilder.build(), networkConfig);
@@ -1087,6 +1085,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			logger.info("Network creation succeed (" + "Name="
 					+ networkConfig.getProperty("Name").getValue() + ", ID="
 					+ networkConfig.getProperty("ID").getValue() + ")");
+
+			// add subnets
+			for (Subnet subnet : networkCreate.getNetworkTemplate().getNetworkConfig().getSubnets()) {
+				createSubnet(subnet, networkConfig.getProperty("ID").getValue().toString());
+			}
 
 			return fromODataNetworkToCimiNetwork(networkConfig);
 		}
@@ -1628,6 +1631,60 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			} else {
 				return entitySet.getEntities().get(0).getProperty("ID").getValue().toString();
 			}
+		}
+
+		private Subnet createSubnet(Subnet subnetCreate, String vmNetworkId)
+				throws ConnectorException {
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntitySetSegment("VMSubnets");
+
+			ODataEntity subnetConfig = ODataFactory.newEntity("VMM.VMSubnet");
+
+			// add stampId
+			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(stampId)).build()));
+
+			// add Name
+			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
+					new ODataPrimitiveValue.Builder().setText(subnetCreate.getName()).build()));
+
+			// add Subnet
+			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("Subnet",
+					new ODataPrimitiveValue.Builder().setText(subnetCreate.getCidr()).build()));
+
+			// add VMNetworkId
+			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("VMNetworkId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(vmNetworkId)).build()));
+
+			// create and execute request
+			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
+					.getEntityCreateRequest(uriBuilder.build(), subnetConfig);
+			createReq.setFormat(ODataPubFormat.ATOM);
+
+			final ODataEntityCreateResponse createRes = createReq.execute();
+
+			// response processing
+			if (createRes.getStatusCode() != 201) {
+				throw new ConnectorException("Subnet creation failed: "
+						+ createRes.getStatusMessage());
+			}
+
+			subnetConfig = createRes.getBody();
+
+			logger.info("Subnet creation succeed (" + "Name="
+					+ subnetConfig.getProperty("Name").getValue() + ", ID="
+					+ subnetConfig.getProperty("ID").getValue() + ")");
+
+			Subnet subnet = new Subnet();
+			subnet.setName(subnetConfig.getProperty("Name").getValue().toString());
+			subnet.setCidr(subnetConfig.getProperty("Subnet").getValue().toString());
+			subnet.setProviderAssignedId(subnetConfig.getProperty("ID").getValue().toString());
+
+			// TODO create static IP address pool?
+
+			return subnet;
 		}
 
 		/**
