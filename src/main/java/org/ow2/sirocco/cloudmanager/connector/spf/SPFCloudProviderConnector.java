@@ -818,7 +818,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 						+ res.getStatusCode() + "):" + res.getStatusMessage());
 			}
 
-			logger.info("Machine deletion succeed");
+			logger.info("Machine deletion succeed with ID=" + machineId);
 		}
 
 		/**
@@ -887,8 +887,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
 				ODataEntity machine = res.getBody();
-				logger.info("Machine requested: " + "ID=" + machine.getProperty("ID").getValue()
-						+ ", " + "Name=" + machine.getProperty("Name").getValue());
+				logger.info("Machine requested: " + "Name="
+						+ machine.getProperty("Name").getValue() + ", " + "ID="
+						+ machine.getProperty("ID").getValue());
 
 				return fromODataVMToMachine(machine);
 
@@ -1043,11 +1044,56 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return null;
 		}
 
-		public Network getNetwork(final String networkId) {
-			return null;
+		/**
+		 * Returns a network defined by its ID
+		 * @param networkId virtual network identifier
+		 * @return the network requested by its ID
+		 * @throws ResourceNotFoundException if the requested network does not exist
+		 * @throws ConnectorException if a client error in OData occurs
+		 */
+		public Network getNetwork(final String networkId) throws ResourceNotFoundException,
+				ConnectorException {
+			logger.info("Getting network (ID=" + networkId + ")");
+
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key);
+
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			try {
+				final ODataRetrieveResponse<ODataEntity> res = req.execute();
+
+				ODataEntity network = res.getBody();
+				logger.info("Network requested: " + "Name="
+						+ network.getProperty("Name").getValue() + ", " + "ID="
+						+ network.getProperty("ID").getValue());
+
+				return fromODataNetworkToCimiNetwork(network);
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of not founding network
+				if (e.getStatusLine().getStatusCode() == 404) {
+					throw new ResourceNotFoundException("Network with id " + networkId
+							+ " does not exist");
+				}
+				throw new ConnectorException(e);
+			}
 		}
 
+		/**
+		 * Creates a virtual network with the configuration passed as a parameter
+		 * @param networkCreate virtual network configuration
+		 * @return the virtual network created
+		 * @throws ConnectorException if network creation failed
+		 */
 		public Network createNetwork(final NetworkCreate networkCreate) throws ConnectorException {
+			logger.info("Creating network (Name=" + networkCreate.getName() + ")");
+
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntitySetSegment("VMNetworks");
 
@@ -1632,9 +1678,19 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				return entitySet.getEntities().get(0).getProperty("ID").getValue().toString();
 			}
 		}
-
+		
+		/**
+		 * Creates a subnet for a specific virtual network with the configuration passed as a parameter
+		 * @param subnetCreate subnet configuration
+		 * @param vmNetworkId identifier of the virtual network to attached the subnet  
+		 * @return the subnet created
+		 * @throws ConnectorException if subnet creation failed
+		 */
 		private Subnet createSubnet(Subnet subnetCreate, String vmNetworkId)
 				throws ConnectorException {
+			logger.info("Creating subnet (Name=" + subnetCreate.getName() + ", VMNetworkId="
+					+ vmNetworkId + ")");
+
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntitySetSegment("VMSubnets");
 
@@ -1675,7 +1731,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			logger.info("Subnet creation succeed (" + "Name="
 					+ subnetConfig.getProperty("Name").getValue() + ", ID="
-					+ subnetConfig.getProperty("ID").getValue() + ")");
+					+ subnetConfig.getProperty("ID").getValue() + ", VMNetworkId=" + vmNetworkId
+					+ ")");
 
 			Subnet subnet = new Subnet();
 			subnet.setName(subnetConfig.getProperty("Name").getValue().toString());
