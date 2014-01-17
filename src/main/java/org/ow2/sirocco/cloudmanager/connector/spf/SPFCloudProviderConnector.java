@@ -1584,6 +1584,16 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return res.getBody();
 		}
 
+		/**
+		 * Get IP addresses of a specific virtual machine defined by its identifier passed as
+		 * parameter
+		 * @param machineId virtual machine identifier
+		 * @param ipv4AllocationType IPv4 address type: dynamic or static
+		 * @param ipv6AllocationType IPv6 address type: dynamic or static
+		 * @return a list of machine network interface IP addresses
+		 * @throws BadStateException if the virtual machine is not running, essential to retrieve IP
+		 *         addresses
+		 */
 		private List<MachineNetworkInterfaceAddress> getIPAddresses(String machineId,
 				String ipv4AllocationType, String ipv6AllocationType) throws BadStateException {
 			Map<String, Object> key = new HashMap<String, Object>();
@@ -1633,6 +1643,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			}
 		}
 
+		/**
+		 * Get all subnets of a specific virtual network defined by its identifier passed as a
+		 * parameter
+		 * @param networkId virtual network identifier
+		 * @return a list of virtual network subnets
+		 */
 		private List<Subnet> getSubnets(String networkId) {
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("VMSubnets").filter(
@@ -1658,6 +1674,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return subnets;
 		}
 
+		/**
+		 * Get the first logical network which allows virtualization
+		 * @return the ID of the first logical network found allowing virtualization, or null if
+		 *         none is found
+		 */
 		private String getNetworkAllowingVirtualization() {
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("LogicalNetworks").filter(
@@ -1748,7 +1769,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		/**
 		 * Creates a new static IP address pool for a specific subnet passed as a parameter
-		 * @param subnet the subnet in which an new IP address pool is created 
+		 * @param subnet the subnet in which an new IP address pool is created
 		 * @throws ConnectorException if IP address pool creation failed
 		 */
 		private void createIPAddressPool(Subnet subnet) throws ConnectorException {
