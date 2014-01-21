@@ -1037,7 +1037,39 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		// Network Service
 		//
 
-		public void deleteNetwork(final String networkId) {
+		/**
+		 * Deletes a virtual network defined by its ID
+		 * @param networkId virtual network identifier
+		 * @throws ConnectorException if the network deletion failed
+		 */
+		public void deleteNetwork(final String networkId) throws ConnectorException {
+			logger.info("Deleting network (ID=" + networkId + ")");
+
+			// deleting subnets
+			for (Subnet subnet : getSubnets(networkId)) {
+				deleteSubnet(subnet.getProviderAssignedId());
+			}
+
+			// deleting network
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key);
+
+			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataDeleteResponse res = req.execute();
+
+			// response processing
+			if (res.getStatusCode() != 204) {
+				throw new ConnectorException("Network deletion failed (HTTP status: "
+						+ res.getStatusCode() + "):" + res.getStatusMessage());
+			}
+
+			logger.info("Network deletion succeed (ID=" + networkId + ")");
 		}
 
 		public Network.State getNetworkState(final String networkId) {
@@ -1487,13 +1519,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 */
 		private Network fromODataNetworkToCimiNetwork(ODataEntity odataNetwork) {
 			Network cimiNetwork = new Network();
-			
+
 			// set network name
 			cimiNetwork.setName(odataNetwork.getProperty("Name").getValue().toString());
-			
+
 			// set network id
 			cimiNetwork.setProviderAssignedId(odataNetwork.getProperty("ID").getValue().toString());
-			
+
 			// set network state
 			if (odataNetwork.getProperty("Enabled").getValue().asPrimitive()
 					.<Boolean> toCastValue()) {
@@ -1501,10 +1533,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			} else {
 				cimiNetwork.setState(Network.State.STOPPED);
 			}
-			
+
 			// TODO set network type
 			cimiNetwork.setNetworkType(Network.Type.PUBLIC);
-			
+
 			// set network subnets
 			cimiNetwork.setSubnets(getSubnets(cimiNetwork.getProviderAssignedId()));
 
@@ -1838,6 +1870,96 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					+ ipAddressPoolConfig.getProperty("Name").getValue() + ", ID="
 					+ ipAddressPoolConfig.getProperty("ID").getValue() + ", VMSubnetId="
 					+ subnet.getProviderAssignedId() + ")");
+		}
+
+		/**
+		 * Deletes an IP address pool defined by its ID
+		 * @param ipPoolId IP address pool identifier
+		 * @throws ConnectorException if the address pool deletion failed
+		 */
+		private void deleteIPAddressPool(String ipPoolId) throws ConnectorException {
+			logger.info("Deleting IP address pool (ID=" + ipPoolId + ")");
+
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(ipPoolId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("StaticIPAddressPools").appendKeySegment(key);
+
+			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataDeleteResponse res = req.execute();
+
+			// response processing
+			if (res.getStatusCode() != 204) {
+				throw new ConnectorException("IP address pool deletion failed (HTTP status: "
+						+ res.getStatusCode() + "):" + res.getStatusMessage());
+			}
+
+			logger.info("IP address pool deletion succeed (ID=" + ipPoolId + ")");
+		}
+
+		/**
+		 * Gets all IP address pools for a subnet
+		 * @param subnetId subnet identifier
+		 * @return a list of IP address pools identifier
+		 */
+		private List<String> getIPAddressPools(String subnetId) {
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("StaticIPAddressPools").filter(
+							"StampId eq guid'" + stampId + "' and VMSubnetId eq guid'" + subnetId
+									+ "'").select("ID");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			final ODataEntitySet entitySet = res.getBody();
+
+			List<String> ipPools = new ArrayList<String>();
+			for (ODataEntity entity : entitySet.getEntities()) {
+				ipPools.add(entity.getProperty("ID").getValue().toString());
+			}
+
+			return ipPools;
+		}
+
+		/**
+		 * Deletes a subnet defined by its ID
+		 * @param subnetId subnet identifier
+		 * @throws ConnectorException if the subnet deletion failed
+		 */
+		private void deleteSubnet(String subnetId) throws ConnectorException {
+			logger.info("Deleting subnet (ID=" + subnetId + ")");
+
+			// deleting IP address pools
+			for (String ipPoolId : getIPAddressPools(subnetId)) {
+				deleteIPAddressPool(ipPoolId);
+			}
+
+			// deleting subnet
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(subnetId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMSubnets").appendKeySegment(key);
+
+			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataDeleteResponse res = req.execute();
+
+			// response processing
+			if (res.getStatusCode() != 204) {
+				throw new ConnectorException("Subnet deletion failed (HTTP status: "
+						+ res.getStatusCode() + "):" + res.getStatusMessage());
+			}
+
+			logger.info("Subnet deletion succeed (ID=" + subnetId + ")");
 		}
 
 		/**
