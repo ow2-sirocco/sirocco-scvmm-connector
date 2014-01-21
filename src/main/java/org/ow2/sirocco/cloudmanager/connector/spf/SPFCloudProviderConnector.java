@@ -1421,8 +1421,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					continue;
 				}
 
-				// TODO set state
-				nic.setState(MachineNetworkInterface.InterfaceState.ACTIVE);
+				// set state
+				if (odataNetwork.getProperty("Enabled").getValue().asPrimitive()
+						.<Boolean> toCastValue()) {
+					nic.setState(MachineNetworkInterface.InterfaceState.ACTIVE);
+				} else {
+					nic.setState(MachineNetworkInterface.InterfaceState.DISABLED);
+				}
 
 				nics.add(nic);
 			}
@@ -1453,8 +1458,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			cimiNetwork.setProviderAssignedId(odataNetworkAdapter.getProperty("VMNetworkId")
 					.getValue().toString());
 
-			// TODO set network state
-			cimiNetwork.setState(Network.State.STARTED);
+			// set network state
+			if (odataNetworkAdapter.getProperty("Enabled").getValue().asPrimitive()
+					.<Boolean> toCastValue()) {
+				cimiNetwork.setState(Network.State.STARTED);
+			} else {
+				cimiNetwork.setState(Network.State.STOPPED);
+			}
 
 			// set network type
 			if (odataNetworkAdapter.getProperty("Accessibility").getValue().toString().equals(
@@ -1477,14 +1487,24 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 */
 		private Network fromODataNetworkToCimiNetwork(ODataEntity odataNetwork) {
 			Network cimiNetwork = new Network();
+			
 			// set network name
 			cimiNetwork.setName(odataNetwork.getProperty("Name").getValue().toString());
+			
 			// set network id
 			cimiNetwork.setProviderAssignedId(odataNetwork.getProperty("ID").getValue().toString());
-			// TODO set network state
-			cimiNetwork.setState(Network.State.STARTED);
+			
+			// set network state
+			if (odataNetwork.getProperty("Enabled").getValue().asPrimitive()
+					.<Boolean> toCastValue()) {
+				cimiNetwork.setState(Network.State.STARTED);
+			} else {
+				cimiNetwork.setState(Network.State.STOPPED);
+			}
+			
 			// TODO set network type
 			cimiNetwork.setNetworkType(Network.Type.PUBLIC);
+			
 			// set network subnets
 			cimiNetwork.setSubnets(getSubnets(cimiNetwork.getProviderAssignedId()));
 
