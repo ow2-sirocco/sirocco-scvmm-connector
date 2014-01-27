@@ -1421,7 +1421,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				// set disk name
 				machineDisk.setName(vhd.getProperty("Name").getValue().toString());
 				// set disk capacity
-				Long capacity = vhd.getProperty("MaximumSize").getValue().asPrimitive()
+				Long capacity = vhd.getProperty("Size").getValue().asPrimitive()
 						.<Long> toCastValue() / 1024; // Byte to KB
 				machineDisk.setCapacity(capacity.intValue());
 				machineDisks.add(machineDisk);
