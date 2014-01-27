@@ -1432,6 +1432,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			boolean ipAddressesUnavailable = false;
 			List<MachineNetworkInterface> nics = new ArrayList<MachineNetworkInterface>();
 			for (ODataEntity odataNetwork : getVirtualNetworkAdapters(machineId).getEntities()) {
+				if (odataNetwork.getProperty("VMNetworkId").hasNullValue()) {
+					break;
+				}
 				MachineNetworkInterface nic = new MachineNetworkInterface();
 
 				// set network
