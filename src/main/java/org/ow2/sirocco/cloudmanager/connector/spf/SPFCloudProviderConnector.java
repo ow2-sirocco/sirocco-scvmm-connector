@@ -654,8 +654,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 									.setType(EdmSimpleType.String).build()));
 					nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType", null));
 					nicOData.add(ODataFactory.newPrimitiveProperty("IPv6AddressType", null));
-					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress", null));
-					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType", null));
+					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress", new ODataPrimitiveValue.Builder().setText("00:00:00:00:00:00")
+							.setType(EdmSimpleType.String).build()));
+					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType", new ODataPrimitiveValue.Builder().setText("Static")
+							.setType(EdmSimpleType.String).build()));
 					nicOData.add(ODataFactory.newPrimitiveProperty("VLanEnabled", null));
 					nicOData.add(ODataFactory.newPrimitiveProperty("VLanId", null));
 
@@ -1693,6 +1695,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 				return nicAddresses;
 			} catch (ODataServerErrorException e) {
+				throw new BadStateException("The virtual machine is not running (ID=" + machineId
+						+ ")", e);
+			} catch (NullPointerException e) {
 				throw new BadStateException("The virtual machine is not running (ID=" + machineId
 						+ ")", e);
 			}
