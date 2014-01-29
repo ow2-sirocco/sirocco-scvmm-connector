@@ -64,6 +64,7 @@ import org.ow2.sirocco.cloudmanager.model.cimi.NetworkCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkPort;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkPortCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.Subnet;
+import org.ow2.sirocco.cloudmanager.model.cimi.SubnetConfig;
 import org.ow2.sirocco.cloudmanager.model.cimi.Volume;
 import org.ow2.sirocco.cloudmanager.model.cimi.Volume.State;
 import org.ow2.sirocco.cloudmanager.model.cimi.VolumeCreate;
@@ -654,10 +655,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 									.setType(EdmSimpleType.String).build()));
 					nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType", null));
 					nicOData.add(ODataFactory.newPrimitiveProperty("IPv6AddressType", null));
-					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress", new ODataPrimitiveValue.Builder().setText("00:00:00:00:00:00")
-							.setType(EdmSimpleType.String).build()));
-					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType", new ODataPrimitiveValue.Builder().setText("Static")
-							.setType(EdmSimpleType.String).build()));
+					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress",
+							new ODataPrimitiveValue.Builder().setText("00:00:00:00:00:00").setType(
+									EdmSimpleType.String).build()));
+					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType",
+							new ODataPrimitiveValue.Builder().setText("Static").setType(
+									EdmSimpleType.String).build()));
 					nicOData.add(ODataFactory.newPrimitiveProperty("VLanEnabled", null));
 					nicOData.add(ODataFactory.newPrimitiveProperty("VLanId", null));
 
@@ -1167,8 +1170,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					+ networkConfig.getProperty("ID").getValue() + ")");
 
 			// add subnets
-			for (Subnet subnet : networkCreate.getNetworkTemplate().getNetworkConfig().getSubnets()) {
-				createSubnet(subnet, networkConfig.getProperty("ID").getValue().toString());
+			for (SubnetConfig subnetConfig : networkCreate.getNetworkTemplate().getNetworkConfig()
+					.getSubnets()) {
+				createSubnet(subnetConfig, networkConfig.getProperty("ID").getValue().toString());
 			}
 
 			return fromODataNetworkToCimiNetwork(networkConfig);
@@ -1763,42 +1767,42 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		/**
 		 * Creates a subnet for a specific virtual network with the configuration passed as a
 		 * parameter
-		 * @param subnetCreate subnet configuration
+		 * @param subnetConfig subnet configuration
 		 * @param networkId identifier of the virtual network to attached the subnet
 		 * @return the subnet created
 		 * @throws ConnectorException if subnet creation failed
 		 */
-		private Subnet createSubnet(Subnet subnetCreate, String networkId)
+		private Subnet createSubnet(SubnetConfig subnetConfig, String networkId)
 				throws ConnectorException {
-			logger.info("Creating subnet (Name=" + subnetCreate.getName() + ", VMNetworkId="
+			logger.info("Creating subnet (Name=" + subnetConfig.getName() + ", VMNetworkId="
 					+ networkId + ")");
 
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntitySetSegment("VMSubnets");
 
-			ODataEntity subnetConfig = ODataFactory.newEntity("VMM.VMSubnet");
+			ODataEntity subnetSPF = ODataFactory.newEntity("VMM.VMSubnet");
 
 			// add stampId
-			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
+			subnetSPF.addProperty(ODataFactory.newPrimitiveProperty("StampId",
 					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
 							UUID.fromString(stampId)).build()));
 
 			// add Name
-			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
-					new ODataPrimitiveValue.Builder().setText(subnetCreate.getName()).build()));
+			subnetSPF.addProperty(ODataFactory.newPrimitiveProperty("Name",
+					new ODataPrimitiveValue.Builder().setText(subnetConfig.getName()).build()));
 
 			// add Subnet
-			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("Subnet",
-					new ODataPrimitiveValue.Builder().setText(subnetCreate.getCidr()).build()));
+			subnetSPF.addProperty(ODataFactory.newPrimitiveProperty("Subnet",
+					new ODataPrimitiveValue.Builder().setText(subnetConfig.getCidr()).build()));
 
 			// add VMNetworkId
-			subnetConfig.addProperty(ODataFactory.newPrimitiveProperty("VMNetworkId",
+			subnetSPF.addProperty(ODataFactory.newPrimitiveProperty("VMNetworkId",
 					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
 							UUID.fromString(networkId)).build()));
 
 			// create and execute request
 			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
-					.getEntityCreateRequest(uriBuilder.build(), subnetConfig);
+					.getEntityCreateRequest(uriBuilder.build(), subnetSPF);
 			createReq.setFormat(ODataPubFormat.ATOM);
 
 			final ODataEntityCreateResponse createRes = createReq.execute();
@@ -1809,17 +1813,16 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 						+ createRes.getStatusMessage());
 			}
 
-			subnetConfig = createRes.getBody();
+			subnetSPF = createRes.getBody();
 
 			logger.info("Subnet creation succeed (" + "Name="
-					+ subnetConfig.getProperty("Name").getValue() + ", ID="
-					+ subnetConfig.getProperty("ID").getValue() + ", VMNetworkId=" + networkId
-					+ ")");
+					+ subnetSPF.getProperty("Name").getValue() + ", ID="
+					+ subnetSPF.getProperty("ID").getValue() + ", VMNetworkId=" + networkId + ")");
 
 			Subnet subnet = new Subnet();
-			subnet.setName(subnetConfig.getProperty("Name").getValue().toString());
-			subnet.setCidr(subnetConfig.getProperty("Subnet").getValue().toString());
-			subnet.setProviderAssignedId(subnetConfig.getProperty("ID").getValue().toString());
+			subnet.setName(subnetSPF.getProperty("Name").getValue().toString());
+			subnet.setCidr(subnetSPF.getProperty("Subnet").getValue().toString());
+			subnet.setProviderAssignedId(subnetSPF.getProperty("ID").getValue().toString());
 
 			// create static IP address pool
 			createIPAddressPool(subnet);
