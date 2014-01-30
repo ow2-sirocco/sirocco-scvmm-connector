@@ -627,16 +627,40 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							EdmSimpleType.String).build()));
 
 			// add VMTemplateId
+			// ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
+			// .getMachineImage(), cloudProviderAccount, cloudProviderLocation);
+			// if (mapping == null) {
+			// throw new ResourceNotFoundException("Cannot find machine image ID of "
+			// + machineCreate.getMachineTemplate().getMachineImage().getName());
+			// }
+			// String templateId = mapping.getProviderAssignedId();
+			// machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VMTemplateId",
+			// new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+			// UUID.fromString(templateId)).build()));
+
+			// add VirtualHardDiskId
 			ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
 					.getMachineImage(), cloudProviderAccount, cloudProviderLocation);
 			if (mapping == null) {
-				throw new ResourceNotFoundException("Cannot find imageId for image "
+				throw new ResourceNotFoundException("Cannot find machine image ID of "
 						+ machineCreate.getMachineTemplate().getMachineImage().getName());
 			}
-			String templateId = mapping.getProviderAssignedId();
-			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VMTemplateId",
+			String vhdId = mapping.getProviderAssignedId();
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VirtualHardDiskId",
 					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
-							UUID.fromString(templateId)).build()));
+							UUID.fromString(vhdId)).build()));
+
+			// add HardwareProfileId
+			mapping = ProviderMapping.find(machineCreate.getMachineTemplate().getMachineConfig(),
+					cloudProviderAccount, cloudProviderLocation);
+			if (mapping == null) {
+				throw new ResourceNotFoundException("Cannot find machine config ID of "
+						+ machineCreate.getMachineTemplate().getMachineConfig().getName());
+			}
+			String hardwareProfileId = mapping.getProviderAssignedId();
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("HardwareProfileId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(hardwareProfileId)).build()));
 
 			// add NewVirtualNetworkAdapterInput
 			ODataCollectionValue collection = new ODataCollectionValue(
@@ -653,16 +677,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							new ODataPrimitiveValue.Builder().setText(
 									getNetworkNameFromId(nic.getNetwork().getProviderAssignedId()))
 									.setType(EdmSimpleType.String).build()));
-					nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType", null));
-					nicOData.add(ODataFactory.newPrimitiveProperty("IPv6AddressType", null));
-					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress",
-							new ODataPrimitiveValue.Builder().setText("00:00:00:00:00:00").setType(
-									EdmSimpleType.String).build()));
-					nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType",
-							new ODataPrimitiveValue.Builder().setText("Static").setType(
-									EdmSimpleType.String).build()));
-					nicOData.add(ODataFactory.newPrimitiveProperty("VLanEnabled", null));
-					nicOData.add(ODataFactory.newPrimitiveProperty("VLanId", null));
+					// nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType",
+					// new ODataPrimitiveValue.Builder().setText("Static").setType(
+					// EdmSimpleType.String).build()));
+					// nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress",
+					// new ODataPrimitiveValue.Builder().setText("00:00:00:00:00:00").setType(
+					// EdmSimpleType.String).build()));
 
 					collection.add(nicOData);
 				}
@@ -675,44 +695,53 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			ODataComplexValue owner = new ODataComplexValue("VMM.UserAndRole");
 
 			// owner: set user name
-			String userName = cloudProviderAccount.getProperties().get("tenantName");
+			String tenantName = cloudProviderAccount.getProperties().get("tenantName");
 			owner.add(ODataFactory.newPrimitiveProperty("UserName",
-					new ODataPrimitiveValue.Builder().setText(userName).setType(
+					new ODataPrimitiveValue.Builder().setText(tenantName).setType(
 							EdmSimpleType.String).build()));
 
 			// owner: set role name
-			// String roleName = getRoleNameFromUserName(userName);
-			String roleName = cloudProviderAccount.getProperties().get("tenantRoleName");
+			// String tenantRoleName = getRoleNameFromUserName(tenantUserName);
+			String tenantRoleName = cloudProviderAccount.getProperties().get("tenantRoleName");
 			owner.add(ODataFactory.newPrimitiveProperty("RoleName",
-					new ODataPrimitiveValue.Builder().setText(roleName).setType(
+					new ODataPrimitiveValue.Builder().setText(tenantRoleName).setType(
 							EdmSimpleType.String).build()));
 
 			// owner: set role id
-			// String roleID = roleName.substring(roleName.length() - 36);
-			String roleID = cloudProviderAccount.getProperties().get("tenantID");
+			// String tenantID = tenantRoleName.substring(tenantRoleName.length() - 36);
+			String tenantID = cloudProviderAccount.getProperties().get("tenantID");
 			owner.add(ODataFactory.newPrimitiveProperty("RoleID", new ODataPrimitiveValue.Builder()
-					.setType(EdmSimpleType.Guid).setValue(UUID.fromString(roleID)).build()));
+					.setType(EdmSimpleType.Guid).setValue(UUID.fromString(tenantID)).build()));
 
 			machineConfig.addProperty(ODataFactory.newComplexProperty("Owner", owner));
 
-			// add credential (user name)
-			try {
-				machineConfig.addProperty(ODataFactory.newPrimitiveProperty("LocalAdminUserName",
-						new ODataPrimitiveValue.Builder().setText(
-								machineCreate.getMachineTemplate().getCredential().getUserName())
-								.setType(EdmSimpleType.String).build()));
-			} catch (NullPointerException e) {
-				// nothing to do
-			}
+			// add user account credentials of the local administrator
+			if (machineCreate.getMachineTemplate().getCredential() != null) {
+				// add user name
+				String adminUserName;
+				if ((adminUserName = machineCreate.getMachineTemplate().getCredential()
+						.getUserName()) != null) {
+					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
+							"LocalAdminUserName", new ODataPrimitiveValue.Builder().setText(
+									adminUserName).setType(EdmSimpleType.String).build()));
+				}
 
-			// add credential (password)
-			try {
-				machineConfig.addProperty(ODataFactory.newPrimitiveProperty("LocalAdminPassword",
-						new ODataPrimitiveValue.Builder().setText(
-								machineCreate.getMachineTemplate().getCredential().getPassword())
-								.setType(EdmSimpleType.String).build()));
-			} catch (NullPointerException e) {
-				// nothing to do
+				// add password
+				String adminPassword;
+				if ((adminPassword = machineCreate.getMachineTemplate().getCredential()
+						.getPassword()) != null) {
+					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
+							"LocalAdminPassword", new ODataPrimitiveValue.Builder().setText(
+									adminPassword).setType(EdmSimpleType.String).build()));
+				}
+
+				// TODO add public key for Linux SSH
+//				String publicKey;
+//				if ((publicKey = machineCreate.getMachineTemplate().getCredential().getPublicKey()) != null) {
+//					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
+//							"LinuxAdministratorSSHKeyString", new ODataPrimitiveValue.Builder()
+//									.setText(publicKey).setType(EdmSimpleType.String).build()));
+//				}
 			}
 
 			// create and execute request
