@@ -626,18 +626,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
 							EdmSimpleType.String).build()));
 
-			// add VMTemplateId
-			// ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
-			// .getMachineImage(), cloudProviderAccount, cloudProviderLocation);
-			// if (mapping == null) {
-			// throw new ResourceNotFoundException("Cannot find machine image ID of "
-			// + machineCreate.getMachineTemplate().getMachineImage().getName());
-			// }
-			// String templateId = mapping.getProviderAssignedId();
-			// machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VMTemplateId",
-			// new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
-			// UUID.fromString(templateId)).build()));
-
 			// add VirtualHardDiskId
 			ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
 					.getMachineImage(), cloudProviderAccount, cloudProviderLocation);
@@ -976,7 +964,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		// Image Service
 		//
 
-		/*
+		/**
+		 * Returns all VMM virtual hard disks
+		 * @param returnAccountImagesOnly never used
+		 * @param searchCriteria never used
+		 * @return a list of all virtual machine images
+		 */
 		public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
 				final Map<String, String> searchCriteria) throws ConnectorException {
 			logger.info("Getting machine images");
@@ -1000,7 +993,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				machineImage.setName(vhd.getProperty("Name").getValue().toString());
 				// TODO set state
 				machineImage.setState(MachineImage.State.AVAILABLE);
-				// TODO set type
+				// set type
 				machineImage.setType(MachineImage.Type.IMAGE);
 				// set provider mappings
 				ProviderMapping providerMapping = new ProviderMapping();
@@ -1010,47 +1003,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				machineImage.setProviderMappings(Collections.singletonList(providerMapping));
 				// set image location
 				machineImage.setImageLocation(vhd.getProperty("Location").getValue().toString());
-
-				result.add(machineImage);
-			}
-
-			return result;
-		}
-		 */
-
-		/**
-		 * Returns all VMM virtual machine templates
-		 * @param returnAccountImagesOnly never used
-		 * @param searchCriteria never used
-		 * @return a list of all virtual machine templates
-		 */
-		public List<MachineImage> getMachineImages(final boolean returnAccountImagesOnly,
-				final Map<String, String> searchCriteria) {
-			logger.info("Getting machine images");
-
-			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("VMTemplates");
-
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
-			req.setFormat(ODataPubFormat.ATOM);
-
-			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			final ODataEntitySet entitySet = res.getBody();
-
-			List<MachineImage> result = new ArrayList<MachineImage>();
-			for (ODataEntity template : entitySet.getEntities()) {
-				MachineImage machineImage = new MachineImage();
-
-				// set name
-				machineImage.setName(template.getProperty("Name").getValue().toString());
-				// set provider mappings
-				ProviderMapping providerMapping = new ProviderMapping();
-				providerMapping.setProviderAssignedId(template.getProperty("ID").getValue()
-						.toString());
-				providerMapping.setProviderAccount(cloudProviderAccount);
-				providerMapping.setProviderLocation(cloudProviderLocation);
-				machineImage.setProviderMappings(Collections.singletonList(providerMapping));
 
 				result.add(machineImage);
 			}
