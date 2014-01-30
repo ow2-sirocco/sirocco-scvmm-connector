@@ -723,13 +723,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 									adminPassword).setType(EdmSimpleType.String).build()));
 				}
 
-				// TODO add public key for Linux SSH
-//				String publicKey;
-//				if ((publicKey = machineCreate.getMachineTemplate().getCredential().getPublicKey()) != null) {
-//					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
-//							"LinuxAdministratorSSHKeyString", new ODataPrimitiveValue.Builder()
-//									.setText(publicKey).setType(EdmSimpleType.String).build()));
-//				}
+				// add public key for Linux SSH
+				String publicKey;
+				if ((publicKey = machineCreate.getMachineTemplate().getCredential().getPublicKey()) != null) {
+					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
+							"LinuxAdministratorSSHKeyString", new ODataPrimitiveValue.Builder()
+									.setText(publicKey).setType(EdmSimpleType.String).build()));
+				}
 			}
 
 			// create and execute request
