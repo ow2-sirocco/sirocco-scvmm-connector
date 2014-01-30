@@ -991,8 +991,14 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				MachineImage machineImage = new MachineImage();
 				// set name
 				machineImage.setName(vhd.getProperty("Name").getValue().toString());
-				// TODO set state
-				machineImage.setState(MachineImage.State.AVAILABLE);
+				// set state
+				if (vhd.getProperty("State").getValue().toString().equals("Normal")) {
+					machineImage.setState(MachineImage.State.AVAILABLE);
+				} else {
+					logger.warn("Unkown machine image state: "
+							+ vhd.getProperty("State").getValue().toString());
+					machineImage.setState(MachineImage.State.UNKNOWN);
+				}
 				// set type
 				machineImage.setType(MachineImage.Type.IMAGE);
 				// set provider mappings
@@ -1003,6 +1009,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				machineImage.setProviderMappings(Collections.singletonList(providerMapping));
 				// set image location
 				machineImage.setImageLocation(vhd.getProperty("Location").getValue().toString());
+				// set architecture
+				machineImage.setArchitecture(vhd.getProperty("OperatingSystemInstance")
+						.getComplexValue().get("Architecture").getValue().toString());
+				// set OS type
+				machineImage.setOsType(vhd.getProperty("OperatingSystemInstance").getComplexValue()
+						.get("OSType").getValue().toString());
 
 				result.add(machineImage);
 			}
@@ -1680,11 +1692,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 				return nicAddresses;
 			} catch (ODataServerErrorException e) {
-				throw new BadStateException("The virtual machine is not running (ID=" + machineId
-						+ ")", e);
+				throw new BadStateException(
+						"Unable to get VM IP addresses because the VM is not running (ID="
+								+ machineId + ")", e);
 			} catch (NullPointerException e) {
-				throw new BadStateException("The virtual machine is not running (ID=" + machineId
-						+ ")", e);
+				throw new BadStateException(
+						"Unable to get VM IP addresses because the VM is not running (ID="
+								+ machineId + ")", e);
 			}
 		}
 
