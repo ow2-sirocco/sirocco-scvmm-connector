@@ -294,7 +294,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	}
 
 	@Override
-	public void deleteAddress(Address address, ProviderTarget target) throws ConnectorException {
+	public void deallocateAddress(Address address, ProviderTarget target) throws ConnectorException {
 		throw new ConnectorException("unsupported operation");
 	}
 
@@ -476,6 +476,19 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			throws ConnectorException {
 		return this.getProvider(target).getMachineImages(returnPublicImages, searchCriteria);
 	}
+	
+	@Override
+	public void addMachineToSecurityGroup(String arg0, String arg1, ProviderTarget arg2)
+			throws ConnectorException {
+		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public void removeMachineFromSecurityGroup(String machineId, String groupId,
+			ProviderTarget target) throws ConnectorException {
+		throw new ConnectorException("unsupported operation");		
+	}
+
 
 	/**
 	 * Provider for Microsoft Service Provider Foundation
@@ -511,6 +524,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		private String serviceRootURL;
 
 		private final String stampId;
+		
+		private final String principalIdHeader;
 
 		/**
 		 * Initializes a SPF provider by instantiating a HTTP client connection with a HTTP request
@@ -526,6 +541,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
 			stampId = getStampId();
 			logger.info("StampId=" + stampId);
+			principalIdHeader = cloudProviderAccount.getProperties().get("tenantName");
 		}
 
 		//
@@ -549,7 +565,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
 			final ODataEntitySet entitySet = res.getBody();
 
-			List<MachineConfiguration> result = new ArrayList<>();
+			List<MachineConfiguration> result = new ArrayList<MachineConfiguration>();
 			for (ODataEntity entity : entitySet.getEntities()) {
 				MachineConfiguration machineConfig = new MachineConfiguration();
 
