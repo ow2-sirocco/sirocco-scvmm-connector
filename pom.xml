@@ -30,9 +30,6 @@
 		<groupId>org.ow2.sirocco.cloudmanager</groupId>
 		<artifactId>sirocco-cloudmanager-connectors</artifactId>
         <version>0.6.1-SNAPSHOT</version>
-		<!-- <artifactId>sirocco-parent</artifactId>
-		<version>0.6.0-SNAPSHOT</version>
-		<relativePath>../pom.xml</relativePath> -->
 	</parent>
 
 	<artifactId>sirocco-cloudmanager-connector-spf</artifactId>
@@ -73,8 +70,8 @@
 
 		<dependency>
 			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-log4j12</artifactId>
-			<version>1.5.8</version>
+			<artifactId>slf4j-jdk14</artifactId>
+			<version>1.5.6</version>
 		</dependency>
 	</dependencies>
 
