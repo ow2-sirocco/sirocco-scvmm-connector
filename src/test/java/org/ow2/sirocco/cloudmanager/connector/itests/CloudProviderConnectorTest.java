@@ -107,7 +107,7 @@ public class CloudProviderConnectorTest {
     @Before
     public void setUp() throws Exception {
     	//XXX
-		System.setProperty("test.endpoint", "https://10.197.211.168:8090/sc2012r2/vmm/microsoft.management.odata.svc/");
+		System.setProperty("test.endpoint", "https://10.197.211.168:8090/sc2012r2/vmm/a0fe78a7-7445-44cf-a39f-b09eceb9688f/microsoft.management.odata.svc/");
 		System.setProperty("test.login", "ocw");
 		System.setProperty("test.password", "opencw.2013");
 		System.setProperty("test.provider", "SPF");
@@ -237,12 +237,15 @@ public class CloudProviderConnectorTest {
             if (net.getNetworkType() == Network.Type.PUBLIC) {
                 publicNetwork = net;
             }
+            System.out.println("- " + net.getName() + " - " + net.getProviderAssignedId() + ": " +
+            		net.getState() + ", " + net.getNetworkType());
         }
 
         //XXX
         publicNetwork = new Network();
-        publicNetwork.setProviderAssignedId("e13c7094-87ea-4207-9a02-18a1bcedd00e");  //Public
-//        publicNetwork.setProviderAssignedId("53d03008-ddff-4531-b272-a430a6457c40");  //test_nic_sirocco
+        publicNetwork.setProviderAssignedId("e13c7094-87ea-4207-9a02-18a1bcedd00e"); // Public
+//        publicNetwork.setProviderAssignedId("21dcc48e-5ae3-4377-b7c4-e3c421205321"); // CORP
+//        publicNetwork.setProviderAssignedId("3df6c32d-74e5-492b-9465-fefc993e3afd"); // test_net_sirocco
 
         Assert.assertNotNull("no public network", publicNetwork);
 
@@ -263,6 +266,7 @@ public class CloudProviderConnectorTest {
             if (machineConfig.getName().equals(this.machineConfigName)) {
                 selectedMachineConfig = machineConfig;
             }
+            System.out.println("- " + machineConfig.getName() + " - " + mapping.getProviderAssignedId());
         }
 
         // get images
@@ -273,6 +277,7 @@ public class CloudProviderConnectorTest {
             Assert.assertTrue(image.getProviderMappings().size() == 1);
             ProviderMapping mapping = image.getProviderMappings().get(0);
             Assert.assertNotNull(mapping.getProviderAssignedId());
+            System.out.println("- " + image.getName() + " - " + mapping.getProviderAssignedId());
         }
 
         //XXX
@@ -304,8 +309,8 @@ public class CloudProviderConnectorTest {
             credentials.setPublicKey(this.key);
             
             //XXX
-            credentials.setUserName("root");
-            credentials.setPassword("123");
+//            credentials.setUserName("root");
+//            credentials.setPassword("123");
             
             machineTemplate.setCredential(credentials);
         }
