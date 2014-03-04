@@ -586,7 +586,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 				// set memory
 				machineConfig.setMemory(entity.getProperty("Memory").getValue().asPrimitive()
-						.<Integer> toCastValue());
+						.<Integer> toCastValue() * 1024); // MB to KB
 
 				// set disks
 				List<DiskTemplate> disks = new ArrayList<>();
@@ -678,16 +678,23 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					ODataComplexValue nicOData = new ODataComplexValue(
 							"NewVMVirtualNetworkAdapterInput");
 
+					ODataEntity network = getNetworkFromId(nic.getNetwork().getProviderAssignedId());
+
 					nicOData.add(ODataFactory.newPrimitiveProperty("VMNetworkName",
 							new ODataPrimitiveValue.Builder().setText(
-									getNetworkNameFromId(nic.getNetwork().getProviderAssignedId()))
-									.setType(EdmSimpleType.String).build()));
-					// nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType",
-					// new ODataPrimitiveValue.Builder().setText("Static").setType(
-					// EdmSimpleType.String).build()));
-					// nicOData.add(ODataFactory.newPrimitiveProperty("MACAddress",
-					// new ODataPrimitiveValue.Builder().setText("00:00:00:00:00:00").setType(
-					// EdmSimpleType.String).build()));
+									network.getProperty("Name").getValue().toString()).setType(
+									EdmSimpleType.String).build()));
+
+					// set IPv4 and MAC addresses type to static for virtualized network
+					if (network.getProperty("IsolationType").getValue().toString().equals(
+							"WindowsNetworkVirtualization")) {
+						nicOData.add(ODataFactory.newPrimitiveProperty("MACAddressType",
+								new ODataPrimitiveValue.Builder().setText("Static").setType(
+										EdmSimpleType.String).build()));
+						nicOData.add(ODataFactory.newPrimitiveProperty("IPv4AddressType",
+								new ODataPrimitiveValue.Builder().setText("Static").setType(
+										EdmSimpleType.String).build()));
+					}
 
 					collection.add(nicOData);
 				}
@@ -695,32 +702,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			machineConfig.addProperty(ODataFactory.newCollectionProperty(
 					"NewVirtualNetworkAdapterInput", collection));
-
-			/*
-			// add owner
-			ODataComplexValue owner = new ODataComplexValue("VMM.UserAndRole");
-
-			// owner: set user name
-			String tenantName = cloudProviderAccount.getProperties().get("tenantName");
-			owner.add(ODataFactory.newPrimitiveProperty("UserName",
-					new ODataPrimitiveValue.Builder().setText(tenantName).setType(
-							EdmSimpleType.String).build()));
-
-			// owner: set role name
-			// String tenantRoleName = getRoleNameFromUserName(tenantUserName);
-			String tenantRoleName = cloudProviderAccount.getProperties().get("tenantRoleName");
-			owner.add(ODataFactory.newPrimitiveProperty("RoleName",
-					new ODataPrimitiveValue.Builder().setText(tenantRoleName).setType(
-							EdmSimpleType.String).build()));
-
-			// owner: set role id
-			// String tenantID = tenantRoleName.substring(tenantRoleName.length() - 36);
-			String tenantID = cloudProviderAccount.getProperties().get("tenantID");
-			owner.add(ODataFactory.newPrimitiveProperty("RoleID", new ODataPrimitiveValue.Builder()
-					.setType(EdmSimpleType.Guid).setValue(UUID.fromString(tenantID)).build()));
-
-			machineConfig.addProperty(ODataFactory.newComplexProperty("Owner", owner));
-			*/
 
 			// add user account credentials of the local administrator
 			if (machineCreate.getMachineTemplate().getCredential() != null) {
@@ -1292,19 +1273,21 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		/**
-		 * Retrieves network name with its identifier
+		 * Retrieves network properties with its identifier
 		 * @param networkId network identifier
-		 * @return network name depending on the network identifier passed as a parameter
+		 * @return network name and isolation type depending on the network identifier passed as a
+		 *         parameter
 		 * @throws ResourceNotFoundException if the requested network does not exist
 		 * @throws ConnectorException if a client error in OData occurs
 		 */
-		private String getNetworkNameFromId(String networkId) throws ResourceNotFoundException,
+		private ODataEntity getNetworkFromId(String networkId) throws ResourceNotFoundException,
 				ConnectorException {
 			Map<String, Object> key = new HashMap<String, Object>();
 			key.put("ID", UUID.fromString(networkId));
 			key.put("StampId", UUID.fromString(stampId));
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key).select("Name");
+					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key).select(
+							"Name,IsolationType");
 
 			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
 					.build());
@@ -1314,7 +1297,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			try {
 				final ODataRetrieveResponse<ODataEntity> res = req.execute();
 
-				return res.getBody().getProperties().get(0).getValue().toString();
+				return res.getBody();
 
 			} catch (ODataClientErrorException e) {
 				// catch exception in case of not founding network
@@ -1435,22 +1418,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.<Integer> toCastValue());
 
 			// set memory
-			machine.setCpu(entity.getProperty("Memory").getValue().asPrimitive()
-					.<Integer> toCastValue());
+			machine.setMemory(entity.getProperty("Memory").getValue().asPrimitive()
+					.<Integer> toCastValue() * 1024); // MB to KB
 
 			// set disks
-			List<MachineDisk> machineDisks = new ArrayList<MachineDisk>();
-			for (ODataEntity vhd : getVirtualHardDisks(machineId).getEntities()) {
-				MachineDisk machineDisk = new MachineDisk();
-				// set disk name
-				machineDisk.setName(vhd.getProperty("Name").getValue().toString());
-				// set disk capacity
-				Long capacity = vhd.getProperty("Size").getValue().asPrimitive()
-						.<Long> toCastValue() / 1024; // Byte to KB
-				machineDisk.setCapacity(capacity.intValue());
-				machineDisks.add(machineDisk);
-			}
-			machine.setDisks(machineDisks);
+			machine.setDisks(getVirtualHardDisks(machineId));
 
 			// set nics
 			boolean ipAddressesUnavailable = false;
@@ -1625,13 +1597,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * @param machineId VM identifier
 		 * @return a set of virtual hard disks of the defined VM
 		 */
-		private ODataEntitySet getVirtualHardDisks(String machineId) {
+		private List<MachineDisk> getVirtualHardDisks(String machineId) {
 			Map<String, Object> key = new HashMap<String, Object>();
 			key.put("ID", UUID.fromString(machineId));
 			key.put("StampId", UUID.fromString(stampId));
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
-					.appendEntityTypeSegment("VirtualHardDisks");
+					.appendEntityTypeSegment("VirtualHardDisks").select("Name,Size");
 
 			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
 					.getEntitySetRequest(uriBuilder.build());
@@ -1639,8 +1611,20 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
 			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			// TODO filter + return MachineDisk object
-			return res.getBody();
+
+			List<MachineDisk> machineDisks = new ArrayList<MachineDisk>();
+			for (ODataEntity vhd : res.getBody().getEntities()) {
+				MachineDisk machineDisk = new MachineDisk();
+				// set disk name
+				machineDisk.setName(vhd.getProperty("Name").getValue().toString());
+				// set disk capacity
+				Long capacity = vhd.getProperty("Size").getValue().asPrimitive()
+						.<Long> toCastValue() / 1024; // Byte to KB
+				machineDisk.setCapacity(capacity.intValue());
+				machineDisks.add(machineDisk);
+			}
+
+			return machineDisks;
 		}
 
 		/**
@@ -1700,6 +1684,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				String[] ipv4Addresses = entity.getProperty("IPv4Addresses").getValue().toString()
 						.split(";");
 				for (String ipv4Address : ipv4Addresses) {
+					if (ipv4Address.equals("127.0.0.1")) {
+						continue;
+					}
 					MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
 					Address address = new Address();
 					address.setIp(ipv4Address);
@@ -1712,6 +1699,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				String[] ipv6Addresses = entity.getProperty("IPv6Addresses").getValue().toString()
 						.split(";");
 				for (String ipv6Address : ipv6Addresses) {
+					if (ipv6Address.equals("::1")) {
+						continue;
+					}
 					MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
 					Address address = new Address();
 					address.setIp(ipv6Address);
@@ -1817,9 +1807,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			// add Name
 			subnetSPF.addProperty(ODataFactory.newPrimitiveProperty("Name",
-					new ODataPrimitiveValue.Builder().setText(
-							(subnetConfig.getName() != null) ? subnetConfig.getName()
-									: "DefaultSubnet").build()));
+					new ODataPrimitiveValue.Builder()
+							.setText(
+									(subnetConfig.getName() == null || subnetConfig.getName()
+											.isEmpty()) ? "DefaultSubnet" : subnetConfig.getName())
+							.build()));
 
 			// add Subnet
 			subnetSPF.addProperty(ODataFactory.newPrimitiveProperty("Subnet",
