@@ -642,6 +642,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
 					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
 							EdmSimpleType.String).build()));
+			
+			// add computer name
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("ComputerName",
+					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
+							EdmSimpleType.String).build()));
 
 			// add VirtualHardDiskId
 			ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
