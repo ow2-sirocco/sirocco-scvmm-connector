@@ -642,7 +642,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
 					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
 							EdmSimpleType.String).build()));
-			
+
 			// add computer name
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("ComputerName",
 					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
@@ -710,31 +710,43 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			// add user account credentials of the local administrator
 			if (machineCreate.getMachineTemplate().getCredential() != null) {
-				// add user name
-				String adminUserName;
-				if ((adminUserName = machineCreate.getMachineTemplate().getCredential()
-						.getUserName()) != null) {
-					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
-							"LocalAdminUserName", new ODataPrimitiveValue.Builder().setText(
-									adminUserName).setType(EdmSimpleType.String).build()));
-				}
-
-				// add password
-				String adminPassword;
-				if ((adminPassword = machineCreate.getMachineTemplate().getCredential()
-						.getPassword()) != null) {
-					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
-							"LocalAdminPassword", new ODataPrimitiveValue.Builder().setText(
-									adminPassword).setType(EdmSimpleType.String).build()));
-				}
-
+				
+				// field credentials
+				String adminUserName = machineCreate.getMachineTemplate().getCredential()
+						.getUserName();
+				String adminPassword = machineCreate.getMachineTemplate().getCredential()
+						.getPassword();
+				
 				// add public key for Linux SSH
 				String publicKey;
 				if ((publicKey = machineCreate.getMachineTemplate().getCredential().getPublicKey()) != null) {
 					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
 							"LinuxAdministratorSSHKeyString", new ODataPrimitiveValue.Builder()
 									.setText(publicKey).setType(EdmSimpleType.String).build()));
+					
+					// set credentials if not defined
+					if (adminUserName == null || adminUserName.isEmpty()) {
+						adminUserName = "root";
+					}
+					if (adminPassword == null || adminPassword.isEmpty()) {
+						adminPassword = "change-me";
+					}
 				}
+				
+				// add user name
+				if (adminUserName != null && !adminUserName.isEmpty()) {
+					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
+							"LocalAdminUserName", new ODataPrimitiveValue.Builder().setText(
+									adminUserName).setType(EdmSimpleType.String).build()));
+				}
+
+				// add password
+				if (adminPassword != null && !adminPassword.isEmpty()) {
+					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
+							"LocalAdminPassword", new ODataPrimitiveValue.Builder().setText(
+									adminPassword).setType(EdmSimpleType.String).build()));
+				}
+
 			}
 
 			// create and execute request
