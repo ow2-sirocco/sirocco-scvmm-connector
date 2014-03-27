@@ -115,7 +115,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 	private List<SPFProvider> providers = new ArrayList<SPFProvider>();
 
-	private synchronized SPFProvider getProvider(final ProviderTarget target) {
+	private synchronized SPFProvider getProvider(final ProviderTarget target)
+			throws ConnectorException {
 		for (SPFProvider provider : this.providers) {
 			if (provider.cloudProviderAccount.getId().equals(target.getAccount().getId())) {
 				// location can be null?
@@ -531,12 +532,28 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * processing. It also queries the Stamp identifier
 		 * @param cloudProviderAccount an account on a cloud provider
 		 * @param cloudProviderLocation a geographical location where cloud resources are running
+		 * @throws ConnectorException if a subscription ID is not found in endpoint URL
 		 */
 		public SPFProvider(final CloudProviderAccount cloudProviderAccount,
-				final CloudProviderLocation cloudProviderLocation) {
+				final CloudProviderLocation cloudProviderLocation) throws ConnectorException {
 			this.cloudProviderAccount = cloudProviderAccount;
 			this.cloudProviderLocation = cloudProviderLocation;
 			this.serviceRootURL = cloudProviderAccount.getCloudProvider().getEndpoint();
+
+			// check if the endpoint URL contains a subscription ID. Endpoint format:
+			// https://<SPF-Server>:8090/sc2012r2/vmm/<Subscription-ID>/microsoft.management.odata.svc/
+			boolean hasSubscriptionID = false;
+			String[] urlSplit = serviceRootURL.split("/");
+			for (int i = 0; i < urlSplit.length; i++) {
+				if (urlSplit[i].equals("vmm") && urlSplit[i + 1].length() == 36) {
+					hasSubscriptionID = true;
+					break;
+				}
+			}
+			if (!hasSubscriptionID) {
+				throw new ConnectorException("Subscription ID not found in endpoint URL");
+			}
+
 			Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
 			principalIdHeader = cloudProviderAccount.getProperties().get("tenantName");
 			stampId = getStampId();
@@ -710,20 +727,21 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			// add user account credentials of the local administrator
 			if (machineCreate.getMachineTemplate().getCredential() != null) {
-				
+
 				// field credentials
 				String adminUserName = machineCreate.getMachineTemplate().getCredential()
 						.getUserName();
 				String adminPassword = machineCreate.getMachineTemplate().getCredential()
 						.getPassword();
-				
+
 				// add public key for Linux SSH
-				String publicKey;
-				if ((publicKey = machineCreate.getMachineTemplate().getCredential().getPublicKey()) != null) {
+				String publicKey = machineCreate.getMachineTemplate().getCredential()
+						.getPublicKey();
+				if (publicKey != null) {
 					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
 							"LinuxAdministratorSSHKeyString", new ODataPrimitiveValue.Builder()
 									.setText(publicKey).setType(EdmSimpleType.String).build()));
-					
+
 					// set credentials if not defined
 					if (adminUserName == null || adminUserName.isEmpty()) {
 						adminUserName = "root";
@@ -732,7 +750,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 						adminPassword = "change-me";
 					}
 				}
-				
+
 				// add user name
 				if (adminUserName != null && !adminUserName.isEmpty()) {
 					machineConfig.addProperty(ODataFactory.newPrimitiveProperty(
