@@ -542,21 +542,63 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			// check if the endpoint URL contains a subscription ID. Endpoint format:
 			// https://<SPF-Server>:8090/sc2012r2/vmm/<Subscription-ID>/microsoft.management.odata.svc/
-			boolean hasSubscriptionID = false;
+			String subscriptionID = null;
 			String[] urlSplit = serviceRootURL.split("/");
 			for (int i = 0; i < urlSplit.length; i++) {
 				if (urlSplit[i].equals("vmm") && urlSplit[i + 1].length() == 36) {
-					hasSubscriptionID = true;
+					subscriptionID = urlSplit[i + 1];
 					break;
 				}
 			}
-			if (!hasSubscriptionID) {
+			if (subscriptionID == null) {
 				throw new ConnectorException("Subscription ID not found in endpoint URL");
 			}
 
+			// instantiate HTTP client connection
 			Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
-			principalIdHeader = cloudProviderAccount.getProperties().get("tenantName");
-			stampId = getStampId();
+
+			/* get tenant name and stamp ID */
+
+			// build admin endpoint URL from input endpoint URL
+			String url = "";
+			for (int i = 0; i < urlSplit.length; i++) {
+				if (urlSplit[i].equals("vmm")) {
+					url += "admin/microsoft.management.odata.svc/";
+					break;
+				}
+				url += urlSplit[i] + "/";
+			}
+
+			// get tenant name for principalIdHeader
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(subscriptionID));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(url).appendEntityTypeSegment(
+					"Tenants").appendKeySegment(key).select("Name");
+
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntity> res = req.execute();
+
+			ODataEntity tenant = res.getBody();
+			principalIdHeader = tenant.getProperty("Name").getValue().toString();
+
+			logger.info("principalIdHeader="+principalIdHeader);
+			
+			// get stamp ID
+			final ODataURIBuilder uriBuilder2 = new ODataURIBuilder(url).appendEntityTypeSegment(
+					"Tenants").appendKeySegment(key).appendEntityTypeSegment("Stamps").select("ID");
+			
+			final ODataEntitySetRequest req2 = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder2.build());
+			req2.setFormat(ODataPubFormat.ATOM);
+
+			final ODataRetrieveResponse<ODataEntitySet> res2 = req2.execute();
+
+			ODataEntitySet stamp = res2.getBody();
+			stampId = stamp.getEntities().get(0).getProperty("ID").getValue().toString();
+
 			logger.info("StampId=" + stampId);
 		}
 
@@ -1247,32 +1289,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		//
 		// OData functions
 		//
-
-		/**
-		 * Queries Stamp identifier depending on cloud name
-		 * @return Stamp identifier, or null if cannot find StampId with the given cloud name
-		 */
-		private final String getStampId() {
-			String cloudName = cloudProviderAccount.getProperties().get("cloudName");
-			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("Clouds").filter("Name eq '" + cloudName + "'")
-					.select("StampId");
-
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
-			req.setFormat(ODataPubFormat.ATOM);
-			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
-
-			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			final ODataEntitySet entities = res.getBody();
-
-			if (entities.getEntities().isEmpty()) {
-				logger.error("Cannot find StampId with the given cloud '" + cloudName + "'");
-				return null;
-			} else {
-				return entities.getEntities().get(0).getProperties().get(0).getValue().toString();
-			}
-		}
 
 		/**
 		 * Retrieves cloud identifier with its name
