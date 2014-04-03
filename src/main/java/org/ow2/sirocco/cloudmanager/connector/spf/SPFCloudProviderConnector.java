@@ -525,6 +525,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 		private final String stampId;
 
+		private final String cloudId;
+
 		private final String principalIdHeader;
 
 		/**
@@ -545,7 +547,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			String subscriptionID = null;
 			String[] urlSplit = serviceRootURL.split("/");
 			for (int i = 0; i < urlSplit.length; i++) {
-				if (urlSplit[i].equals("vmm") && urlSplit[i + 1].length() == 36) {
+				if (urlSplit[i].toLowerCase().equals("vmm") && urlSplit[i + 1].length() == 36) {
 					subscriptionID = urlSplit[i + 1];
 					break;
 				}
@@ -557,12 +559,12 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			// instantiate HTTP client connection
 			Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
 
-			/* get tenant name and stamp ID */
+			/* get tenant name, stamp ID and cloud ID */
 
-			// build admin endpoint URL from input endpoint URL
+			// build admin endpoint URL from input endpoint URL (to get tenant name)
 			String url = "";
 			for (int i = 0; i < urlSplit.length; i++) {
-				if (urlSplit[i].equals("vmm")) {
+				if (urlSplit[i].toLowerCase().equals("vmm")) {
 					url += "admin/microsoft.management.odata.svc/";
 					break;
 				}
@@ -584,22 +586,26 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			ODataEntity tenant = res.getBody();
 			principalIdHeader = tenant.getProperty("Name").getValue().toString();
 
-			logger.info("principalIdHeader="+principalIdHeader);
-			
-			// get stamp ID
-			final ODataURIBuilder uriBuilder2 = new ODataURIBuilder(url).appendEntityTypeSegment(
-					"Tenants").appendKeySegment(key).appendEntityTypeSegment("Stamps").select("ID");
-			
+			logger.info("principalIdHeader=" + principalIdHeader);
+
+			// get stamp ID and cloud ID
+			final ODataURIBuilder uriBuilder2 = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("Clouds").select("ID,StampId");
+
 			final ODataEntitySetRequest req2 = ODataRetrieveRequestFactory
 					.getEntitySetRequest(uriBuilder2.build());
 			req2.setFormat(ODataPubFormat.ATOM);
+			req2.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
 			final ODataRetrieveResponse<ODataEntitySet> res2 = req2.execute();
 
-			ODataEntitySet stamp = res2.getBody();
-			stampId = stamp.getEntities().get(0).getProperty("ID").getValue().toString();
+			ODataEntitySet cloud = res2.getBody();
+			// there is only one couple Cloud-Stamp for a tenant subscription
+			cloudId = cloud.getEntities().get(0).getProperty("ID").getValue().toString();
+			stampId = cloud.getEntities().get(0).getProperty("StampId").getValue().toString();
 
 			logger.info("StampId=" + stampId);
+			logger.info("CloudId=" + cloudId);
 		}
 
 		//
@@ -682,10 +688,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntitySetSegment("VirtualMachines");
 
 			ODataEntity machineConfig = ODataFactory.newEntity("VMM.VirtualMachine");
-
-			// get CloudId
-			String cloudId = getCloudIdFromName(cloudProviderAccount.getProperties().get(
-					"cloudName"));
 
 			// add StampId
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
@@ -1289,39 +1291,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		//
 		// OData functions
 		//
-
-		/**
-		 * Retrieves cloud identifier with its name
-		 * @param cloudName cloud identified name
-		 * @return cloud identifier depending on the cloud name passed as a parameter
-		 * @throws ResourceNotFoundException if the requested cloud does not exist
-		 * @throws ConnectorException if a client error in OData occurs
-		 */
-		private String getCloudIdFromName(String cloudName) throws ResourceNotFoundException,
-				ConnectorException {
-			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("Clouds").filter("Name eq '" + cloudName + "'")
-					.select("ID");
-
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
-			req.setFormat(ODataPubFormat.ATOM);
-			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
-
-			try {
-				final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-
-				return res.getBody().getEntities().get(0).getProperties().get(0).getValue()
-						.toString();
-
-			} catch (ODataClientErrorException e) {
-				// catch exception in case of not founding cloud
-				if (e.getStatusLine().getStatusCode() == 404) {
-					throw new ResourceNotFoundException("Cloud '" + cloudName + "'does not exist");
-				}
-				throw new ConnectorException(e);
-			}
-		}
 
 		/**
 		 * Retrieves network properties with its identifier
