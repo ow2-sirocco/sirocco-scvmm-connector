@@ -2021,6 +2021,42 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		/**
+		 * Returns VMM hardware profile defined by its ID
+		 * @param hardwareProfileId VMM hardware profile identifier
+		 * @return a the machine configuration (CPU and memory) requested
+		 */
+		private MachineConfiguration getMachineConfig(String hardwareProfileId) {
+			logger.info("Getting machine config (ID=" + hardwareProfileId + ")");
+
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(hardwareProfileId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("HardwareProfiles").appendKeySegment(key).select(
+							"CPUCount,Memory");
+
+			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			final ODataRetrieveResponse<ODataEntity> res = req.execute();
+			final ODataEntity entity = res.getBody();
+
+			MachineConfiguration machineConfig = new MachineConfiguration();
+
+			// set cpu
+			machineConfig.setCpu(entity.getProperty("CPUCount").getValue().asPrimitive()
+					.<Integer> toCastValue());
+
+			// set memory
+			machineConfig.setMemory(entity.getProperty("Memory").getValue().asPrimitive()
+					.<Integer> toCastValue() * 1024); // MB to KB
+
+			return machineConfig;
+		}
+
+		/**
 		 * Class used to instantiate HttpClient
 		 */
 		private class SimpleHttpsClientFactory implements HttpClientFactory {
