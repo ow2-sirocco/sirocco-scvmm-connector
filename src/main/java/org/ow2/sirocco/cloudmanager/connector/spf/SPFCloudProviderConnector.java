@@ -699,7 +699,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
 							UUID.fromString(cloudId)).build()));
 
-			// add name
+			// add VM name
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
 					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
 							EdmSimpleType.String).build()));
@@ -709,9 +709,29 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
 							EdmSimpleType.String).build()));
 
-			// add VirtualHardDiskId
+			// get number of CPU and amount of memory from MachineConfiguration ID
 			ProviderMapping mapping = ProviderMapping.find(machineCreate.getMachineTemplate()
-					.getMachineImage(), cloudProviderAccount, cloudProviderLocation);
+					.getMachineConfig(), cloudProviderAccount, cloudProviderLocation);
+			if (mapping == null) {
+				throw new ResourceNotFoundException("Cannot find machine config ID of "
+						+ machineCreate.getMachineTemplate().getMachineConfig().getName());
+			}
+			String hardwareProfileId = mapping.getProviderAssignedId();
+			MachineConfiguration machineConfiguration = getMachineConfiguration(hardwareProfileId);
+
+			// add number of CPU
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("CPUCount",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Byte).setValue(
+							machineConfiguration.getCpu()).build()));
+
+			// add amount of memory
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("Memory",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Byte).setValue(
+							machineConfiguration.getMemory() / 1024).build()));
+
+			// add VirtualHardDiskId
+			mapping = ProviderMapping.find(machineCreate.getMachineTemplate().getMachineImage(),
+					cloudProviderAccount, cloudProviderLocation);
 			if (mapping == null) {
 				throw new ResourceNotFoundException("Cannot find machine image ID of "
 						+ machineCreate.getMachineTemplate().getMachineImage().getName());
@@ -720,18 +740,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("VirtualHardDiskId",
 					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
 							UUID.fromString(vhdId)).build()));
-
-			// add HardwareProfileId
-			mapping = ProviderMapping.find(machineCreate.getMachineTemplate().getMachineConfig(),
-					cloudProviderAccount, cloudProviderLocation);
-			if (mapping == null) {
-				throw new ResourceNotFoundException("Cannot find machine config ID of "
-						+ machineCreate.getMachineTemplate().getMachineConfig().getName());
-			}
-			String hardwareProfileId = mapping.getProviderAssignedId();
-			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("HardwareProfileId",
-					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
-							UUID.fromString(hardwareProfileId)).build()));
 
 			// add NewVirtualNetworkAdapterInput
 			ODataCollectionValue collection = new ODataCollectionValue(
@@ -2025,7 +2033,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * @param hardwareProfileId VMM hardware profile identifier
 		 * @return a the machine configuration (CPU and memory) requested
 		 */
-		private MachineConfiguration getMachineConfig(String hardwareProfileId) {
+		private MachineConfiguration getMachineConfiguration(String hardwareProfileId) {
 			logger.info("Getting machine config (ID=" + hardwareProfileId + ")");
 
 			Map<String, Object> key = new HashMap<String, Object>();
