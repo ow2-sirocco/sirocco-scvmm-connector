@@ -28,16 +28,15 @@
 
 	<parent>
 		<groupId>org.ow2.sirocco.cloudmanager</groupId>
-		<artifactId>sirocco-parent</artifactId>
-		<version>0.6.0-SNAPSHOT</version>
-		<relativePath>../pom.xml</relativePath>
+		<artifactId>sirocco-cloudmanager-connectors</artifactId>
+        <version>0.6.1-SNAPSHOT</version>
 	</parent>
 
-	<artifactId>sirocco-cloudmanager-connector-scvmm</artifactId>
+	<artifactId>sirocco-cloudmanager-connector-spf</artifactId>
 
 	<packaging>jar</packaging>
 
-	<name>SIROCCO :: CloudManager :: Connector :: Microsoft System Center VMM</name>
+	<name>SIROCCO :: CloudManager :: Connector :: Microsoft Service Provider Foundation</name>
 
 
 	<dependencies>
@@ -45,7 +44,20 @@
 		<dependency>
 			<groupId>org.ow2.sirocco.cloudmanager</groupId>
 			<artifactId>sirocco-cloudmanager-connector-api</artifactId>
-			<version>0.6.0-SNAPSHOT</version>
+			<version>${project.version}</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.msopentech.odatajclient</groupId>
+			<artifactId>odatajclient-engine</artifactId>
+			<version>0.9.0</version>
+		</dependency>
+
+		<dependency>
+			<groupId>javax.persistence</groupId>
+			<artifactId>persistence-api</artifactId>
+			<version>1.0</version>
 			<scope>provided</scope>
 		</dependency>
 
@@ -57,12 +69,10 @@
 		</dependency>
 
 		<dependency>
-			<groupId>javax.persistence</groupId>
-			<artifactId>persistence-api</artifactId>
-			<version>1.0</version>
-			<scope>provided</scope>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-jdk14</artifactId>
+			<version>1.5.6</version>
 		</dependency>
-
 	</dependencies>
 
 	<build>
@@ -77,6 +87,41 @@
 				</configuration>
 			</plugin>
 		</plugins>
+		<pluginManagement>
+			<plugins>
+				<!--This plugin's configuration is used to store Eclipse m2e settings only. It has no influence on the Maven build itself.-->
+				<plugin>
+					<groupId>org.eclipse.m2e</groupId>
+					<artifactId>lifecycle-mapping</artifactId>
+					<version>1.0.0</version>
+					<configuration>
+						<lifecycleMappingMetadata>
+							<pluginExecutions>
+								<pluginExecution>
+									<pluginExecutionFilter>
+										<groupId>
+											org.zeroturnaround
+										</groupId>
+										<artifactId>
+											jrebel-maven-plugin
+										</artifactId>
+										<versionRange>
+											[1.1.1,)
+										</versionRange>
+										<goals>
+											<goal>generate</goal>
+										</goals>
+									</pluginExecutionFilter>
+									<action>
+										<ignore></ignore>
+									</action>
+								</pluginExecution>
+							</pluginExecutions>
+						</lifecycleMappingMetadata>
+					</configuration>
+				</plugin>
+			</plugins>
+		</pluginManagement>
 	</build>
 
 
