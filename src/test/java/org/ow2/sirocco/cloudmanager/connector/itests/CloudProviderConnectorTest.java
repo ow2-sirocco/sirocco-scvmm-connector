@@ -243,9 +243,8 @@ public class CloudProviderConnectorTest {
 
         //XXX
         publicNetwork = new Network();
-        publicNetwork.setProviderAssignedId("e13c7094-87ea-4207-9a02-18a1bcedd00e"); // Public
-//        publicNetwork.setProviderAssignedId("21dcc48e-5ae3-4377-b7c4-e3c421205321"); // CORP
-//        publicNetwork.setProviderAssignedId("3df6c32d-74e5-492b-9465-fefc993e3afd"); // test_net_sirocco
+        publicNetwork.setProviderAssignedId("7ce39558-2584-4f26-b877-c48a2094d088"); // Public
+//        publicNetwork.setProviderAssignedId("f9635ce9-684a-434a-ae83-6214c97bc6fa"); // TEST_VIRT
 
         Assert.assertNotNull("no public network", publicNetwork);
 
