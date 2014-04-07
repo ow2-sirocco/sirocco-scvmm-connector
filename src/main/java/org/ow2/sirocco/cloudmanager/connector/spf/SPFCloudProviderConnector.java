@@ -705,8 +705,14 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							EdmSimpleType.String).build()));
 
 			// add computer name
+			String computerName = machineCreate.getName();
+			// maximum computer name length allowed is 15
+			if (computerName.length() > 15) {
+				computerName = computerName.substring(0, 15);
+				logger.warn("Computer name exceeds maximum allowed length of 15. It has been truncated.");
+			}
 			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("ComputerName",
-					new ODataPrimitiveValue.Builder().setText(machineCreate.getName()).setType(
+					new ODataPrimitiveValue.Builder().setText(computerName).setType(
 							EdmSimpleType.String).build()));
 
 			// get number of CPU and amount of memory from MachineConfiguration ID
