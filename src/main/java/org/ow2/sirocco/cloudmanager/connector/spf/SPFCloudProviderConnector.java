@@ -1411,47 +1411,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		/**
-		 * Retrieves user role name with its unique name. A user role is the concatenation of the
-		 * user name and an identifier.
-		 * @param userName user identified name
-		 * @return user role name depending on the user name passed as a parameter
-		 * @throws ResourceNotFoundException if the requested user does not exist
-		 * @throws ConnectorException if a client error in OData occurs
-		 */
-		private String getRoleNameFromUserName(String userName) throws ResourceNotFoundException,
-				ConnectorException {
-			// user role maximum length is 64 characters and identifier
-			// length is 36 characters so user name is truncated if its
-			// length is over than 27 characters
-			if (userName.length() > 27) {
-				userName = userName.substring(0, 27);
-			}
-
-			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("UserRoles").filter(
-							"startswith(Name, '" + userName + "')").select("Name");
-
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
-			req.setFormat(ODataPubFormat.ATOM);
-			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
-
-			try {
-				final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-
-				return res.getBody().getEntities().get(0).getProperties().get(0).getValue()
-						.toString();
-
-			} catch (ODataClientErrorException e) {
-				// catch exception in case of not founding user
-				if (e.getStatusLine().getStatusCode() == 404) {
-					throw new ResourceNotFoundException("User '" + userName + "'does not exist");
-				}
-				throw new ConnectorException(e);
-			}
-		}
-
-		/**
 		 * Controls the virtual machine defined by its ID
 		 * @param machineId virtual machine identifier
 		 * @param machineAction action to operate
