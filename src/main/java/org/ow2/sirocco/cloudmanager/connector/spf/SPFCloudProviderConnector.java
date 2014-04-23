@@ -72,9 +72,12 @@ import org.ow2.sirocco.cloudmanager.model.cimi.VolumeImage;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderAccount;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.CloudProviderLocation;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.ProviderMapping;
+import org.ow2.sirocco.cloudmanager.model.cimi.extension.Quota;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.SecurityGroup;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.SecurityGroupCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.extension.SecurityGroupRule;
+import org.ow2.sirocco.cloudmanager.model.utils.ResourceType;
+import org.ow2.sirocco.cloudmanager.model.utils.Unit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -488,6 +491,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	public void removeMachineFromSecurityGroup(String machineId, String groupId,
 			ProviderTarget target) throws ConnectorException {
 		throw new ConnectorException("unsupported operation");
+	}
+
+	@Override
+	public Quota getQuota(ProviderTarget target) throws ConnectorException {
+		return this.getProvider(target).getQuota();
 	}
 
 	/**
@@ -1300,6 +1308,65 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			logger.info("Number of networks: " + result.size());
 
 			return result;
+		}
+
+		/**
+		 * Returns quota and usage resources for a user. Resources are virtual machines, vCPUs,
+		 * memory (MB) and storage (GB)
+		 * @return quota and usage resources for a user
+		 */
+		public Quota getQuota() {
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(cloudId));
+			key.put("StampId", UUID.fromString(stampId));
+			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("Clouds").appendKeySegment(key)
+					.appendEntityTypeSegment("QuotaAndUsageComponents").select(
+							"QuotaDimension,UserRoleQuota,UserRoleUsage");
+
+			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
+					.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			final ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			Quota quota = new Quota();
+			List<Quota.Resource> resourceQuotas = new ArrayList<Quota.Resource>();
+			quota.setResources(resourceQuotas);
+			for (ODataEntity entity : res.getBody().getEntities()) {
+				Quota.Resource resourceQuota = null;
+				switch (entity.getProperty("QuotaDimension").getValue().toString()) {
+				case "VMCount":
+					resourceQuota = new Quota.Resource(ResourceType.VIRTUAL_MACHINE, Unit.COUNT);
+					break;
+				case "CpuCount":
+					resourceQuota = new Quota.Resource(ResourceType.CPU, Unit.COUNT);
+					break;
+				case "MemoryMB":
+					resourceQuota = new Quota.Resource(ResourceType.MEMORY, Unit.MEGABYTE);
+					break;
+				case "StorageGB":
+					resourceQuota = new Quota.Resource(ResourceType.DISK_SPACE, Unit.GIGABYTE);
+					break;
+				}
+				if (resourceQuota != null) {
+					if (entity.getProperty("UserRoleQuota").getValue() == null) {
+						resourceQuota.setLimit(0);
+					} else {
+						resourceQuota.setLimit(entity.getProperty("UserRoleQuota").getValue()
+								.asPrimitive().<Integer> toCastValue());
+					}
+					if (entity.getProperty("UserRoleUsage").getValue() == null) {
+						resourceQuota.setUsed(0);
+					} else {
+						resourceQuota.setUsed(entity.getProperty("UserRoleUsage").getValue()
+								.asPrimitive().<Integer> toCastValue());
+					}
+					resourceQuotas.add(resourceQuota);
+				}
+			}
+
+			return quota;
 		}
 
 		//
