@@ -276,7 +276,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public void addAddressToMachine(String machineId, Address address, ProviderTarget target)
 			throws ConnectorException {
-		throw new ConnectorException("unsupported operation");
+		this.getProvider(target).addAddressToMachine(machineId, address);
 	}
 
 	@Override
@@ -288,7 +288,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public Address allocateAddress(Map<String, String> properties, ProviderTarget target)
 			throws ConnectorException {
-		throw new ConnectorException("unsupported operation");
+		return this.getProvider(target).allocateAddress(properties);
 	}
 
 	@Override
@@ -1367,6 +1367,170 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			}
 
 			return quota;
+		}
+
+		public Address allocateAddress(Map<String, String> properties) {
+			// XXX test implementation
+
+			// get the ID of the gateway connected to the network
+			String networkId = properties.get("VMNetworkId");
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkId));
+			key.put("StampId", UUID.fromString(stampId));
+			ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key)
+					.appendEntityTypeSegment("VMNetworkGateways").select("ID");
+
+			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			String networkGatewayID = res.getBody().getEntities().get(0).getProperty("ID")
+					.getValue().toString();
+
+			// get the ID of the gateway NAT connection
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkGatewayID));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment(
+					"VMNetworkGateways").appendKeySegment(key).appendEntityTypeSegment(
+					"NATConnections").select("ID");
+
+			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			res = req.execute();
+			String natConnectionId = res.getBody().getEntities().get(0).getProperty("ID")
+					.getValue().toString();
+
+			// get NAT rules
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(natConnectionId));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment(
+					"NATConnections").appendKeySegment(key).appendEntityTypeSegment("Rules")
+					.select("ExternalIPAddress,ExternalPort");
+
+			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			res = req.execute();
+
+			// get next available port
+			int portMax = 0;
+			for (ODataEntity entity : res.getBody().getEntities()) {
+				int port = entity.getProperty("ExternalPort").getValue().asPrimitive()
+						.<Integer> toCastValue();
+				if (port > portMax) {
+					portMax = port;
+				}
+			}
+
+			// increment port or set it to 20000 if no rules exist
+			if (portMax == 0) {
+				portMax = 20000;
+			} else {
+				portMax++;
+			}
+
+			// get external IP address
+			String externalIP = res.getBody().getEntities().get(0).getProperty("ExternalIPAddress")
+					.getValue().toString();
+
+			Address address = new Address();
+			address.setIp(externalIP + ":" + portMax);
+			address.setDefaultGateway(networkGatewayID);
+
+			return address;
+		}
+
+		public void addAddressToMachine(String machineId, Address address)
+				throws ConnectorException {
+			// XXX test implementation
+
+			// get the ID of the gateway NAT connection
+			String networkGatewayID = address.getDefaultGateway();
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkGatewayID));
+			key.put("StampId", UUID.fromString(stampId));
+			ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VMNetworkGateways").appendKeySegment(key)
+					.appendEntityTypeSegment("NATConnections").select("ID");
+
+			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+			String natConnectionId = res.getBody().getEntities().get(0).getProperty("ID")
+					.getValue().toString();
+
+			// create NAT rule
+			ODataEntity natRuleConfig = ODataFactory.newEntity("VMM.NATRule");
+
+			// add StampId
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("StampId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(stampId)).build()));
+
+			// add NATConnectionId
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("NATConnectionId",
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Guid).setValue(
+							UUID.fromString(natConnectionId)).build()));
+
+			// add Name
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("Name",
+					new ODataPrimitiveValue.Builder().setText(machineId).build()));
+
+			// add Protocol
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("Protocol",
+					new ODataPrimitiveValue.Builder().setText("TCP").build()));
+
+			// add ExternalPort
+			String externalPort = address.getIp().substring(address.getIp().indexOf(":") + 1);
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("ExternalPort",
+					new ODataPrimitiveValue.Builder().setText(externalPort).build()));
+
+			// add InternalIPAddress
+			String internalIPAddress = address.getInternalIp().substring(0,
+					address.getInternalIp().indexOf(":"));
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("InternalIPAddress",
+					new ODataPrimitiveValue.Builder().setText(internalIPAddress).build()));
+
+			// add InternalPort
+			String internalPort = address.getInternalIp().substring(
+					address.getInternalIp().indexOf(":") + 1);
+			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("InternalPort",
+					new ODataPrimitiveValue.Builder().setText(internalPort).build()));
+
+			// create and execute request
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntitySetSegment("NATRules");
+			ODataEntityCreateRequest createReq = ODataCUDRequestFactory.getEntityCreateRequest(
+					uriBuilder.build(), natRuleConfig);
+			createReq.setFormat(ODataPubFormat.ATOM);
+			createReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			ODataEntityCreateResponse createRes = createReq.execute();
+
+			// response processing
+			if (createRes.getStatusCode() != 201) {
+				throw new ConnectorException("NAT rule creation failed: "
+						+ createRes.getStatusMessage());
+			}
+
+			natRuleConfig = createRes.getBody();
+
+			logger.info("NAT rule creation succeed (Name="
+					+ natRuleConfig.getProperty("Name").getValue() + ", ExternalIPAddress="
+					+ natRuleConfig.getProperty("ExternalIPAddress").getValue() + ", ExternalPort="
+					+ natRuleConfig.getProperty("ExternalPort").getValue() + ", InternalIPAddress="
+					+ natRuleConfig.getProperty("InternalIPAddress").getValue() + ", InternalPort="
+					+ natRuleConfig.getProperty("InternalPort").getValue() + ")");
 		}
 
 		//
