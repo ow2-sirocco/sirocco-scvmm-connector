@@ -1351,13 +1351,13 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				}
 				if (resourceQuota != null) {
 					if (entity.getProperty("UserRoleQuota").getValue() == null) {
-						resourceQuota.setLimit(0);
+						resourceQuota.setLimit(-1);
 					} else {
 						resourceQuota.setLimit(entity.getProperty("UserRoleQuota").getValue()
 								.asPrimitive().<Integer> toCastValue());
 					}
 					if (entity.getProperty("UserRoleUsage").getValue() == null) {
-						resourceQuota.setUsed(0);
+						resourceQuota.setUsed(-1);
 					} else {
 						resourceQuota.setUsed(entity.getProperty("UserRoleUsage").getValue()
 								.asPrimitive().<Integer> toCastValue());
