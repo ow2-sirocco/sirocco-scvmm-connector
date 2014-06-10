@@ -7,6 +7,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -63,6 +64,7 @@ import org.ow2.sirocco.cloudmanager.model.cimi.Network;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkCreate;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkPort;
 import org.ow2.sirocco.cloudmanager.model.cimi.NetworkPortCreate;
+import org.ow2.sirocco.cloudmanager.model.cimi.PortForwardingRule;
 import org.ow2.sirocco.cloudmanager.model.cimi.Subnet;
 import org.ow2.sirocco.cloudmanager.model.cimi.SubnetConfig;
 import org.ow2.sirocco.cloudmanager.model.cimi.Volume;
@@ -103,6 +105,7 @@ import com.msopentech.odatajclient.engine.data.ODataEntity;
 import com.msopentech.odatajclient.engine.data.ODataEntitySet;
 import com.msopentech.odatajclient.engine.data.ODataFactory;
 import com.msopentech.odatajclient.engine.data.ODataPrimitiveValue;
+import com.msopentech.odatajclient.engine.data.ODataValue;
 import com.msopentech.odatajclient.engine.data.metadata.edm.EdmSimpleType;
 import com.msopentech.odatajclient.engine.format.ODataPubFormat;
 import com.msopentech.odatajclient.engine.uri.ODataURIBuilder;
@@ -276,7 +279,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public void addAddressToMachine(String machineId, Address address, ProviderTarget target)
 			throws ConnectorException {
-		this.getProvider(target).addAddressToMachine(machineId, address);
+		throw new ConnectorException("unsupported operation");
 	}
 
 	@Override
@@ -288,7 +291,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public Address allocateAddress(Map<String, String> properties, ProviderTarget target)
 			throws ConnectorException {
-		return this.getProvider(target).allocateAddress(properties);
+		throw new ConnectorException("unsupported operation");
 	}
 
 	@Override
@@ -496,6 +499,18 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 	@Override
 	public Quota getQuota(ProviderTarget target) throws ConnectorException {
 		return this.getProvider(target).getQuota();
+	}
+
+	@Override
+	public Address allocateAndAddAddressToMachine(String machineId, PortForwardingRule natRule,
+			ProviderTarget target) throws ConnectorException {
+		return this.getProvider(target).allocateAndAddAddressToMachine(machineId, natRule);
+	}
+
+	@Override
+	public void removeAndReleaseAddressFromMachine(String machineId, Address address,
+			ProviderTarget target) throws ConnectorException {
+		this.getProvider(target).removeAndReleaseAddressFromMachine(machineId, address);
 	}
 
 	/**
@@ -1369,17 +1384,33 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return quota;
 		}
 
-		public Address allocateAddress(Map<String, String> properties) {
-			// XXX test implementation
+		/**
+		 * Creates a NAT rule to access a specific VM through a gateway. A NAT rule is an IP and
+		 * port forwarding between a virtual network (external IP and port) and a VM connected to
+		 * that network (internal IP and port).<br>
+		 * Internal IP and port are passed as parameter through <code>PortForwardingRule</code>
+		 * object. External IP and port are given in output through <code>Address</code> object.<br>
+		 * The external port is the next available port from all VM network NAT rules. By default it
+		 * starts from 20000.
+		 * @param machineId virtual machine identifier
+		 * @param natRule port forwarding rule containing internal IP and port of the VM
+		 * @return public address IP object containing the new NAT rule
+		 * @throws ConnectorException if the VM network is not found or is not connected to a
+		 *         gateway
+		 */
+		public Address allocateAndAddAddressToMachine(String machineId, PortForwardingRule natRule)
+				throws ConnectorException {
 
-			// get the ID of the gateway connected to the network
-			String networkId = properties.get("VMNetworkId");
+			/* Allocate IP address to machine */
+
+			// get the ID of the network attached to the VM
 			Map<String, Object> key = new HashMap<String, Object>();
-			key.put("ID", UUID.fromString(networkId));
+			key.put("ID", UUID.fromString(machineId));
 			key.put("StampId", UUID.fromString(stampId));
 			ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key)
-					.appendEntityTypeSegment("VMNetworkGateways").select("ID");
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
+					.appendEntityTypeSegment("VirtualNetworkAdapters").select(
+							"VMNetworkId,IPv4Addresses");
 
 			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
 					.build());
@@ -1387,6 +1418,52 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
 			ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+
+			// loop entities to find the correct network
+			// if the VM internal IP is null, we choose the first network found
+			String networkId = null;
+			if (natRule.getInternalIp() == null) {
+				ODataEntity nic = res.getBody().getEntities().get(0);
+				networkId = nic.getProperty("VMNetworkId").toString();
+				natRule.setInternalIp(nic.getProperty("IPv4Addresses").getCollectionValue()
+						.iterator().next().toString());
+			} else {
+				boolean found = false;
+				for (ODataEntity entity : res.getBody().getEntities()) {
+					for (Iterator<ODataValue> iterator = entity.getProperty("IPv4Addresses")
+							.getCollectionValue().iterator(); iterator.hasNext();) {
+						if (iterator.next().toString().equals(natRule.getInternalIp())) {
+							networkId = entity.getProperty("VMNetworkId").getValue().toString();
+							found = true;
+							break;
+						}
+					}
+					if (found) {
+						break;
+					}
+				}
+			}
+			if (networkId == null) {
+				throw new ConnectorException("VM network not found");
+			}
+
+			// get the ID of the gateway connected to the network
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkId));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment("VMNetworks")
+					.appendKeySegment(key).appendEntityTypeSegment("VMNetworkGateways")
+					.select("ID");
+
+			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			res = req.execute();
+			if (res.getBody().getEntities().isEmpty()) {
+				throw new ConnectorException("The network '" + networkId
+						+ "' is not connected to a gateway");
+			}
 			String networkGatewayID = res.getBody().getEntities().get(0).getProperty("ID")
 					.getValue().toString();
 
@@ -1437,38 +1514,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				portMax++;
 			}
 
-			// get external IP address
-			String externalIP = res.getBody().getEntities().get(0).getProperty("ExternalIPAddress")
-					.getValue().toString();
-
-			Address address = new Address();
-			address.setIp(externalIP + ":" + portMax);
-			address.setDefaultGateway(networkGatewayID);
-
-			return address;
-		}
-
-		public void addAddressToMachine(String machineId, Address address)
-				throws ConnectorException {
-			// XXX test implementation
-
-			// get the ID of the gateway NAT connection
-			String networkGatewayID = address.getDefaultGateway();
-			Map<String, Object> key = new HashMap<String, Object>();
-			key.put("ID", UUID.fromString(networkGatewayID));
-			key.put("StampId", UUID.fromString(stampId));
-			ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
-					.appendEntityTypeSegment("VMNetworkGateways").appendKeySegment(key)
-					.appendEntityTypeSegment("NATConnections").select("ID");
-
-			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
-					.build());
-			req.setFormat(ODataPubFormat.ATOM);
-			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
-
-			ODataRetrieveResponse<ODataEntitySet> res = req.execute();
-			String natConnectionId = res.getBody().getEntities().get(0).getProperty("ID")
-					.getValue().toString();
+			/* Add IP address to machine */
 
 			// create NAT rule
 			ODataEntity natRuleConfig = ODataFactory.newEntity("VMM.NATRule");
@@ -1492,21 +1538,18 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					new ODataPrimitiveValue.Builder().setText("TCP").build()));
 
 			// add ExternalPort
-			String externalPort = address.getIp().substring(address.getIp().indexOf(":") + 1);
 			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("ExternalPort",
-					new ODataPrimitiveValue.Builder().setText(externalPort).build()));
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Int32)
+							.setValue(portMax).build()));
 
 			// add InternalIPAddress
-			String internalIPAddress = address.getInternalIp().substring(0,
-					address.getInternalIp().indexOf(":"));
 			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("InternalIPAddress",
-					new ODataPrimitiveValue.Builder().setText(internalIPAddress).build()));
+					new ODataPrimitiveValue.Builder().setText(natRule.getInternalIp()).build()));
 
 			// add InternalPort
-			String internalPort = address.getInternalIp().substring(
-					address.getInternalIp().indexOf(":") + 1);
 			natRuleConfig.addProperty(ODataFactory.newPrimitiveProperty("InternalPort",
-					new ODataPrimitiveValue.Builder().setText(internalPort).build()));
+					new ODataPrimitiveValue.Builder().setType(EdmSimpleType.Int32).setValue(
+							natRule.getInternalPort()).build()));
 
 			// create and execute request
 			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntitySetSegment("NATRules");
@@ -1531,6 +1574,26 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					+ natRuleConfig.getProperty("ExternalPort").getValue() + ", InternalIPAddress="
 					+ natRuleConfig.getProperty("InternalIPAddress").getValue() + ", InternalPort="
 					+ natRuleConfig.getProperty("InternalPort").getValue() + ")");
+
+			// add external IP and port to PortForwardingRule object
+			natRule.setExternalIp(natRuleConfig.getProperty("ExternalIPAddress").getValue()
+					.toString());
+			natRule.setExternalPort(natRuleConfig.getProperty("ExternalPort").getValue()
+					.asPrimitive().<Integer> toCastValue());
+
+			// build address to return
+			Address address = new Address();
+			address.setIp(natRule.getExternalIp());
+			address.setPortForwardingRule(natRule);
+			address.setProtocol("IPv4");
+
+			return address;
+		}
+
+		public void removeAndReleaseAddressFromMachine(String machineId, Address address)
+				throws ConnectorException {
+			// TODO Auto-generated method stub
+
 		}
 
 		//
