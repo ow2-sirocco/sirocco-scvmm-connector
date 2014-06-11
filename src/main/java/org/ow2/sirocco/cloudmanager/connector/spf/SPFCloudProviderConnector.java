@@ -1396,7 +1396,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * @param natRule port forwarding rule containing internal IP and port of the VM
 		 * @return public address IP object containing the new NAT rule
 		 * @throws ConnectorException if the VM network is not found or is not connected to a
-		 *         gateway
+		 *         gateway. Also throws an exception if the NAT rule creation fails.
 		 */
 		public Address allocateAndAddAddressToMachine(String machineId, PortForwardingRule natRule)
 				throws ConnectorException {
@@ -1489,7 +1489,7 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			key.put("StampId", UUID.fromString(stampId));
 			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment(
 					"NATConnections").appendKeySegment(key).appendEntityTypeSegment("Rules")
-					.select("ExternalIPAddress,ExternalPort");
+					.select("ExternalPort");
 
 			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
 			req.setFormat(ODataPubFormat.ATOM);
@@ -1568,8 +1568,8 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			natRuleConfig = createRes.getBody();
 
-			logger.info("NAT rule creation succeed (Name="
-					+ natRuleConfig.getProperty("Name").getValue() + ", ExternalIPAddress="
+			logger.info("NAT rule creation succeed (ID="
+					+ natRuleConfig.getProperty("ID").getValue() + ", ExternalIPAddress="
 					+ natRuleConfig.getProperty("ExternalIPAddress").getValue() + ", ExternalPort="
 					+ natRuleConfig.getProperty("ExternalPort").getValue() + ", InternalIPAddress="
 					+ natRuleConfig.getProperty("InternalIPAddress").getValue() + ", InternalPort="
@@ -1590,10 +1590,128 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			return address;
 		}
 
+		/**
+		 * Deletes the NAT rule of a specific machine.
+		 * @param machineId virtual machine identifier
+		 * @param address public address IP of the machine containing the NAT rule
+		 * @throws ConnectorException if the VM network is not found or is not connected to a
+		 *         gateway. Also throws an exception if the NAT rule deletion fails.
+		 */
 		public void removeAndReleaseAddressFromMachine(String machineId, Address address)
 				throws ConnectorException {
-			// TODO Auto-generated method stub
 
+			// get the ID of the network attached to the VM
+			Map<String, Object> key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(machineId));
+			key.put("StampId", UUID.fromString(stampId));
+			ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
+					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
+					.appendEntityTypeSegment("VirtualNetworkAdapters").select(
+							"VMNetworkId,IPv4Addresses");
+
+			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
+					.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			ODataRetrieveResponse<ODataEntitySet> res = req.execute();
+
+			// loop entities to find the correct network
+			String networkId = null;
+			boolean found = false;
+			for (ODataEntity entity : res.getBody().getEntities()) {
+				for (Iterator<ODataValue> iterator = entity.getProperty("IPv4Addresses")
+						.getCollectionValue().iterator(); iterator.hasNext();) {
+					if (iterator.next().toString().equals(
+							address.getPortForwardingRule().getInternalIp())) {
+						networkId = entity.getProperty("VMNetworkId").getValue().toString();
+						found = true;
+						break;
+					}
+				}
+				if (found) {
+					break;
+				}
+			}
+			if (networkId == null) {
+				throw new ConnectorException("VM network not found");
+			}
+
+			// get the ID of the gateway connected to the network
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkId));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment("VMNetworks")
+					.appendKeySegment(key).appendEntityTypeSegment("VMNetworkGateways")
+					.select("ID");
+
+			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			res = req.execute();
+			if (res.getBody().getEntities().isEmpty()) {
+				throw new ConnectorException("The network '" + networkId
+						+ "' is not connected to a gateway");
+			}
+			String networkGatewayID = res.getBody().getEntities().get(0).getProperty("ID")
+					.getValue().toString();
+
+			// get the ID of the gateway NAT connection
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(networkGatewayID));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment(
+					"VMNetworkGateways").appendKeySegment(key).appendEntityTypeSegment(
+					"NATConnections").select("ID");
+
+			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			res = req.execute();
+			String natConnectionId = res.getBody().getEntities().get(0).getProperty("ID")
+					.getValue().toString();
+
+			// get NAT rule ID with the external port
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(natConnectionId));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment(
+					"NATConnections").appendKeySegment(key).appendEntityTypeSegment("Rules")
+					.filter("Protocol eq 'TCP' and ExternalPort eq "
+							+ address.getPortForwardingRule().getExternalPort()).select("ID");
+
+			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			req.setFormat(ODataPubFormat.ATOM);
+			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			res = req.execute();
+
+			String natRuleId = res.getBody().getEntities().get(0).getProperty("ID").getValue()
+					.toString();
+
+			// delete NAT rule
+			key = new HashMap<String, Object>();
+			key.put("ID", UUID.fromString(natRuleId));
+			key.put("StampId", UUID.fromString(stampId));
+			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment("NATRules")
+					.appendKeySegment(key);
+
+			ODataDeleteRequest deleteReq = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
+					.build());
+			deleteReq.setFormat(ODataPubFormat.ATOM);
+			deleteReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
+
+			ODataDeleteResponse resReq = deleteReq.execute();
+
+			// response processing
+			if (resReq.getStatusCode() != 204) {
+				throw new ConnectorException("NAT rule deletion failed (HTTP status: "
+						+ res.getStatusCode() + "):" + res.getStatusMessage());
+			}
+
+			logger.info("NAT rule deletion succeed (ID=" + natRuleId + ")");
 		}
 
 		//
