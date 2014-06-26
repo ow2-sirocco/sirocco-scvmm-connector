@@ -1842,14 +1842,30 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				nic.setNetwork(fromODataNetworkAdapterToCimiNetwork(odataNetwork));
 
 				// set addresses
-				try {
-					nic.setAddresses(getIPAddresses(machineId, odataNetwork.getProperty(
-							"IPv4AddressType").getValue().toString(), odataNetwork.getProperty(
-							"IPv6AddressType").getValue().toString()));
-				} catch (BadStateException e) {
-					logger.warn(e.getMessage());
-					nic.setAddresses(new ArrayList<MachineNetworkInterfaceAddress>());
+				List<MachineNetworkInterfaceAddress> nicAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
+				String ipv4AllocationType = odataNetwork.getProperty("IPv4AddressType").getValue()
+						.toString();
+				for (Iterator<ODataValue> iterator = odataNetwork.getProperty("IPv4Addresses")
+						.getValue().asCollection().iterator(); iterator.hasNext();) {
+					MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
+					Address address = new Address();
+					address.setIp(iterator.next().toString());
+					address.setProtocol("IPv4");
+					address.setAllocation(ipv4AllocationType);
+					nicAddress.setAddress(address);
+					nicAddresses.add(nicAddress);
 				}
+
+				// if addresses empty, try to get them from GuestInfos entity
+				if (nicAddresses.isEmpty()) {
+					try {
+						nicAddresses = getIPAddresses(machineId, ipv4AllocationType);
+					} catch (BadStateException e) {
+						logger.warn(e.getMessage());
+					}
+				}
+
+				nic.setAddresses(nicAddresses);
 
 				// update boolean used after to update machine state
 				if (nic.getAddresses().isEmpty()) {
@@ -2061,19 +2077,18 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		 * parameter
 		 * @param machineId virtual machine identifier
 		 * @param ipv4AllocationType IPv4 address type: dynamic or static
-		 * @param ipv6AllocationType IPv6 address type: dynamic or static
 		 * @return a list of machine network interface IP addresses
 		 * @throws BadStateException if the virtual machine is not running, essential to retrieve IP
 		 *         addresses
 		 */
 		private List<MachineNetworkInterfaceAddress> getIPAddresses(String machineId,
-				String ipv4AllocationType, String ipv6AllocationType) throws BadStateException {
+				String ipv4AllocationType) throws BadStateException {
 			Map<String, Object> key = new HashMap<String, Object>();
 			key.put("VMId", UUID.fromString(machineId));
 			key.put("StampId", UUID.fromString(stampId));
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("GuestInfos").appendKeySegment(key).select(
-							"IPv4Addresses,IPv6Addresses");
+							"IPv4Addresses");
 
 			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
 					.build());
@@ -2085,7 +2100,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				final ODataEntity entity = res.getBody();
 
 				List<MachineNetworkInterfaceAddress> nicAddresses = new ArrayList<MachineNetworkInterfaceAddress>();
-				// IPv4Addresses
 				String[] ipv4Addresses = entity.getProperty("IPv4Addresses").getValue().toString()
 						.split(";");
 				for (String ipv4Address : ipv4Addresses) {
@@ -2097,21 +2111,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					address.setIp(ipv4Address);
 					address.setProtocol("IPv4");
 					address.setAllocation(ipv4AllocationType);
-					nicAddress.setAddress(address);
-					nicAddresses.add(nicAddress);
-				}
-				// IPv6Addresses
-				String[] ipv6Addresses = entity.getProperty("IPv6Addresses").getValue().toString()
-						.split(";");
-				for (String ipv6Address : ipv6Addresses) {
-					if (ipv6Address.equals("::1")) {
-						continue;
-					}
-					MachineNetworkInterfaceAddress nicAddress = new MachineNetworkInterfaceAddress();
-					Address address = new Address();
-					address.setIp(ipv6Address);
-					address.setProtocol("IPv6");
-					address.setAllocation(ipv6AllocationType);
 					nicAddress.setAddress(address);
 					nicAddresses.add(nicAddress);
 				}
