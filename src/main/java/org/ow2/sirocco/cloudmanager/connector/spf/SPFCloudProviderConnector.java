@@ -16,6 +16,7 @@ import java.util.UUID;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import javax.swing.plaf.SliderUI;
 
 import org.apache.http.HttpException;
 import org.apache.http.HttpHost;
@@ -541,16 +542,15 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		}
 
 		private CloudProviderAccount cloudProviderAccount;
-
 		private CloudProviderLocation cloudProviderLocation;
-
 		private String serviceRootURL;
-
 		private final String stampId;
-
 		private final String cloudId;
-
 		private final String principalIdHeader;
+		private final String smaEndpoint;
+		private final HttpClientFactory spfFactory;
+		private final HttpClientFactory smaFactory;
+		static private Object lock = new Object();
 
 		/**
 		 * Initializes a SPF provider by instantiating a HTTP client connection with a HTTP request
@@ -564,6 +564,14 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			this.cloudProviderAccount = cloudProviderAccount;
 			this.cloudProviderLocation = cloudProviderLocation;
 			this.serviceRootURL = cloudProviderAccount.getCloudProvider().getEndpoint();
+
+			// get additional properties(for connecting to the SMA web service)
+			Map<String, String> properties = cloudProviderAccount.getProperties();
+			if (properties == null || properties.get("smaEndpoint") == null || properties.get("smaLogin") == null
+			    || properties.get("smaPassword") == null) {
+			    throw new ConnectorException("No sma properties: smaEndpoint or smaLogin or smaPassword");
+			}
+			this.smaEndpoint = properties.get("smaEndpoint");
 
 			// check if the endpoint URL contains a subscription ID. Endpoint format:
 			// https://<SPF-Server>:8090/sc2012r2/vmm/<Subscription-ID>/microsoft.management.odata.svc/
@@ -579,8 +587,9 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				throw new ConnectorException("Subscription ID not found in endpoint URL");
 			}
 
-			// instantiate HTTP client connection
-			Configuration.setHttpClientFactory(new SimpleHttpsClientFactory());
+			// create an HttpClientFactory object for SPF and SMA web services
+			spfFactory = new SimpleHttpsClient(cloudProviderAccount.getLogin(), cloudProviderAccount.getPassword()).getFactory();
+			smaFactory = new SimpleHttpsClient(properties.get("smaLogin"), properties.get("smaPassword")).getFactory();
 
 			/* get tenant name, stamp ID and cloud ID */
 
@@ -600,8 +609,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(url).appendEntityTypeSegment(
 					"Tenants").appendKeySegment(key).select("Name");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 
 			final ODataRetrieveResponse<ODataEntity> res = req.execute();
@@ -615,8 +627,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataURIBuilder uriBuilder2 = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("Clouds").select("ID,StampId");
 
-			final ODataEntitySetRequest req2 = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder2.build());
+			final ODataEntitySetRequest req2;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req2 = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder2.build());
+			}
 			req2.setFormat(ODataPubFormat.ATOM);
 			req2.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -646,8 +661,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("HardwareProfiles").select(
 							"ID,CPUCount,Memory,Name,TotalVHDCapacity");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -848,30 +866,190 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			}
 
+			// set the auto start mode to true
+			machineConfig.addProperty(ODataFactory.newPrimitiveProperty("StartVM",
+					new ODataPrimitiveValue.Builder().setText("True").setType(
+							EdmSimpleType.Boolean).build()));
+
 			// create and execute request
-			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
-					.getEntityCreateRequest(uriBuilder.build(), machineConfig);
+			final ODataEntityCreateRequest createReq;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				createReq = ODataCUDRequestFactory.getEntityCreateRequest(uriBuilder.build(), machineConfig);
+			}
 			createReq.setFormat(ODataPubFormat.ATOM);
 			createReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
-			final ODataEntityCreateResponse createRes = createReq.execute();
+			final String machineId;
+			try {
+				final ODataEntityCreateResponse createRes = createReq.execute();
 
-			// response processing
-			if (createRes.getStatusCode() != 201) {
-				throw new ConnectorException("Machine creation failed: "
-						+ createRes.getStatusMessage());
+				// response processing
+				if (createRes.getStatusCode() != 201) {
+					throw new ConnectorException("Machine creation failed (Name=" + machineCreate.getName() + "): " + createRes.getStatusMessage());
+				}
+
+				machineConfig = createRes.getBody();
+				machineId = machineConfig.getProperty("ID").getValue().toString();
+
+				// wait for the machine creation to be completed
+				int tries = 360;
+				Machine.State machineState = getMachineState(machineId);
+				do {
+				    if (!machineState.equals(Machine.State.CREATING)) break;
+				    try {
+						Thread.sleep(1000 * 10);
+				    } catch (InterruptedException e) {
+				    	break;
+				    }
+				    machineState = getMachineState(machineId);
+				} while (tries-- > 0);
+
+				// expected machine state is STOPPED, STARTING or STARTED
+			    if (tries == 0) {
+					throw new ConnectorException("Machine creation error (ID=" + machineId + "): timeout when waiting for the the deployment completion");
+			    }
+			    if (!machineState.equals(Machine.State.STOPPED) && !machineState.equals(Machine.State.STARTING) && !machineState.equals(Machine.State.STARTED)) {
+					throw new ConnectorException("Machine creation error (ID=" + machineId + "): final state of the virtual machine is " + machineState.toString());
+			    }
+
+				// Set any specified user data
+				String userData = machineCreate.getMachineTemplate().getUserData();
+				if (userData != null && !userData.isEmpty()) {
+				    setUserData(machineConfig.getProperty("ID").getValue().toString(), userData);
+				} else {
+					setUserData(machineConfig.getProperty("ID").getValue().toString(), "U_N_S_E_T");
+				}
+
+				final Machine machine = new Machine();
+				machine.setProviderAssignedId(machineConfig.getProperty("ID").getValue().toString());
+
+				logger.info("Machine creation succeed (" + "Name="
+						+ machineConfig.getProperty("Name").getValue() + ", ID="
+						+ machineConfig.getProperty("ID").getValue() + ")");
+
+				return machine;
+
+			} catch (ODataClientErrorException e) {
+				// catch exception in case of creation error
+				if (e.getStatusLine().getStatusCode() == 400) {
+					throw new ConnectorException("Machine creation error (Name=" + machineCreate.getName() + ")");
+				}
+				throw new ConnectorException(e);
+			}
+		}
+
+		/**
+		 *
+		 * @param machineID
+		 * @param userData
+		 */
+		private void setUserData(String machineID, String userData) throws ConnectorException
+		{
+			// connection
+			// informations
+			//XXX
+			String runbookName = "SetUserData";
+			String VMMConnection = "VMMConnection";
+			String userDataName = "userData";
+
+			// REST calls
+			// GET the runbookID - Must use EntitySet (Response being a list of entries ~ Feed)
+			ODataURIBuilder uri1 = new ODataURIBuilder(smaEndpoint).appendEntityTypeSegment("Runbooks").filter("RunbookName eq '" + runbookName + "'");
+
+			final ODataEntitySetRequest req1;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(smaFactory);
+				req1 = ODataRetrieveRequestFactory.getEntitySetRequest(uri1.build());
+			}
+			req1.setFormat(ODataPubFormat.ATOM);
+			req1.addCustomHeader("x-ms-principal-id", "ocw@bull.net");
+
+			ODataRetrieveResponse<ODataEntitySet> res1 = req1.execute();
+			ODataEntitySet entitySet = res1.getBody();
+			String runbookID = null;
+			for (ODataEntity ent : entitySet.getEntities()) {
+				runbookID = ent.getProperty("RunbookID").getValue().toString();
+				break;
+			}
+			if (runbookID == null) {
+				throw new ConnectorException("SetUserData (Machine ID=" + machineID.toString() + "): error - no runbook matching name \"" + runbookName + "\"");
 			}
 
-			machineConfig = createRes.getBody();
+	        logger.info("SetUserData (Machine ID=" + machineID.toString() + "): starting runbook \"" + runbookName + "\" with ID=" + runbookID);
 
-			logger.info("Machine creation succeed (" + "Name="
-					+ machineConfig.getProperty("Name").getValue() + ", ID="
-					+ machineConfig.getProperty("ID").getValue() + ")");
+	        // Build the URI to start the runbook
+			ODataURIBuilder uri2 = new ODataURIBuilder(smaEndpoint).appendEntityTypeSegment("Runbooks").appendKeySegment(UUID.fromString(runbookID)).appendEntityTypeSegment("Start");
 
-			final Machine machine = new Machine();
-			machine.setProviderAssignedId(machineConfig.getProperty("ID").getValue().toString());
+			// Specify the parameters in the body
+			ODataEntity parameters = ODataFactory.newEntity("");
+			ODataCollectionValue collection = new ODataCollectionValue("");
+			parameters.addProperty(ODataFactory.newCollectionProperty("parameters", collection));
+			ODataComplexValue param1 = new ODataComplexValue("");
+			param1.add(ODataFactory.newPrimitiveProperty("Name", new ODataPrimitiveValue.Builder().setText("VirtualMachineID").build()));
+			param1.add(ODataFactory.newPrimitiveProperty("Value", new ODataPrimitiveValue.Builder().setType(null).setText(machineID).build()));
+			collection.add(param1);
+			ODataComplexValue param2 = new ODataComplexValue("");
+			param2.add(ODataFactory.newPrimitiveProperty("Name", new ODataPrimitiveValue.Builder().setText("UserDataName").build()));
+			param2.add(ODataFactory.newPrimitiveProperty("Value", new ODataPrimitiveValue.Builder().setText(userDataName).build()));
+			collection.add(param2);
+			ODataComplexValue param3 = new ODataComplexValue("");
+			param3.add(ODataFactory.newPrimitiveProperty("Name", new ODataPrimitiveValue.Builder().setText("UserDataValue").build()));
+			param3.add(ODataFactory.newPrimitiveProperty("Value", new ODataPrimitiveValue.Builder().setValue(userData).build()));
+			collection.add(param3);
+			ODataComplexValue param4 = new ODataComplexValue("");
+			param4.add(ODataFactory.newPrimitiveProperty("Name", new ODataPrimitiveValue.Builder().setText("Connection").build()));
+			param4.add(ODataFactory.newPrimitiveProperty("Value", new ODataPrimitiveValue.Builder().setValue(VMMConnection).build()));
+			collection.add(param4);
 
-			return machine;
+			// Build the request
+			final ODataEntityCreateRequest req2;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(smaFactory);
+				req2 = ODataCUDRequestFactory.getEntityCreateRequest(uri2.build(), parameters);
+			}
+			req2.setFormat(ODataPubFormat.JSON_VERBOSE);
+			req2.addCustomHeader("x-ms-principal-id", "ocw@bull.net");
+
+			// Execute the request
+			ODataEntityCreateResponse res2 = req2.execute();
+
+			// Get the response
+			ODataEntity runbook = res2.getBody();
+
+			// Retrieve the job ID
+			String jobID = runbook.getProperty("d").getComplexValue().get("Start").getValue().toString();
+	        logger.info("SetUserData (Machine ID=" + machineID.toString() + "): job ID " + jobID);
+
+	        // Wait for the job completion
+			int tries = 60;
+			String status = "";
+			ODataURIBuilder uri3 = new ODataURIBuilder(smaEndpoint).appendEntityTypeSegment("Jobs").appendKeySegment(UUID.fromString(jobID));
+			do {
+				final ODataEntityRequest req3;	/* MUST be re-assigned every loops */
+				synchronized(lock) {
+					Configuration.setHttpClientFactory(smaFactory);
+					req3 = ODataRetrieveRequestFactory.getEntityRequest(uri3.build());
+				}
+				req3.setFormat(ODataPubFormat.ATOM);
+				req3.addCustomHeader("x-ms-principal-id", "ocw@bull.net");
+				ODataRetrieveResponse<ODataEntity> res3 = req3.execute();
+		        ODataEntity job = res3.getBody();
+		        status = job.getProperty("JobStatus").getValue().toString();
+		        logger.info("SetUserData (Machine ID=" + machineID.toString() + "): job status " + status);
+		        if (status.contentEquals("Completed") || status.contentEquals("Suspended") || status.contentEquals("Stopped") || status.contentEquals("Failed")) break;
+			    try {
+					Thread.sleep(1000 * 10);
+			    } catch (InterruptedException e) {
+			    	break;
+			    }
+			} while (tries-- > 0);
+			if (tries == 0) {
+				throw new ConnectorException("SetUserData (Machine ID=" + machineID.toString() + "): error - timeout for runbook completion");
+			}
+			if (!status.contentEquals("Completed")) {
+				throw new ConnectorException("SetUserData (Machine ID=" + machineID.toString() + "): error - unexpected final status " + status);
+			}
 		}
 
 		/**
@@ -934,21 +1112,25 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 		public void deleteMachine(final String machineId) throws ConnectorException {
 			logger.info("Deleting machine (ID=" + machineId + ")");
 
+			// Stop the VM if it is running
+			if (!getMachineState(machineId).equals(Machine.State.STOPPED)) {
+				stopMachine(machineId, true);
+			}
+
+			// Delete the VM
 			Map<String, Object> key = new HashMap<String, Object>();
 			key.put("ID", UUID.fromString(machineId));
 			key.put("StampId", UUID.fromString(stampId));
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key);
 
-			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
-					.build());
+			final ODataDeleteRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
-
-			// Stop the VM if it is running
-			if (!getMachineState(machineId).equals(Machine.State.STOPPED)) {
-				stopMachine(machineId, true);
-			}
 
 			final ODataDeleteResponse res = req.execute();
 
@@ -979,8 +1161,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key).select(
 							"Status");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1021,8 +1206,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key).select(
 							"ID,Name,Status,CPUCount,Memory");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1099,8 +1287,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualHardDisks").select(
 							"ID,Name,State,Location,OperatingSystemInstance");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1177,8 +1368,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key);
 
-			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
-					.build());
+			final ODataDeleteRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1215,8 +1409,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key).select(
 							"ID,Name,Enabled");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1269,8 +1466,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							UUID.fromString(getNetworkAllowingVirtualization())).build()));
 
 			// create and execute request
-			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
-					.getEntityCreateRequest(uriBuilder.build(), networkConfig);
+			final ODataEntityCreateRequest createReq;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				createReq = ODataCUDRequestFactory.getEntityCreateRequest(uriBuilder.build(), networkConfig);
+			}
 			createReq.setFormat(ODataPubFormat.ATOM);
 			createReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1307,8 +1507,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("VMNetworks").select("ID,Name,Enabled");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1339,8 +1542,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("QuotaAndUsageComponents").select(
 							"QuotaDimension,UserRoleQuota,UserRoleUsage");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1412,8 +1618,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualNetworkAdapters").select(
 							"VMNetworkId,IPv4Addresses");
 
-			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
-					.build());
+			ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1455,7 +1664,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendKeySegment(key).appendEntityTypeSegment("VMNetworkGateways")
 					.select("ID");
 
-			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1475,7 +1687,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					"VMNetworkGateways").appendKeySegment(key).appendEntityTypeSegment(
 					"NATConnections").select("ID");
 
-			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1491,7 +1706,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					"NATConnections").appendKeySegment(key).appendEntityTypeSegment("Rules")
 					.select("ExternalPort");
 
-			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1553,8 +1771,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 
 			// create and execute request
 			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntitySetSegment("NATRules");
-			ODataEntityCreateRequest createReq = ODataCUDRequestFactory.getEntityCreateRequest(
-					uriBuilder.build(), natRuleConfig);
+			final ODataEntityCreateRequest createReq;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				createReq = ODataCUDRequestFactory.getEntityCreateRequest(uriBuilder.build(), natRuleConfig);
+			}
 			createReq.setFormat(ODataPubFormat.ATOM);
 			createReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1609,8 +1830,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualNetworkAdapters").select(
 							"VMNetworkId,IPv4Addresses");
 
-			ODataEntitySetRequest req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder
-					.build());
+			ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1645,7 +1869,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendKeySegment(key).appendEntityTypeSegment("VMNetworkGateways")
 					.select("ID");
 
-			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1665,7 +1892,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					"VMNetworkGateways").appendKeySegment(key).appendEntityTypeSegment(
 					"NATConnections").select("ID");
 
-			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1682,7 +1912,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.filter("Protocol eq 'TCP' and ExternalPort eq "
 							+ address.getPortForwardingRule().getExternalPort()).select("ID");
 
-			req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1698,8 +1931,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			uriBuilder = new ODataURIBuilder(serviceRootURL).appendEntityTypeSegment("NATRules")
 					.appendKeySegment(key);
 
-			ODataDeleteRequest deleteReq = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
-					.build());
+			final ODataDeleteRequest deleteReq;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				deleteReq = ODataCUDRequestFactory.getDeleteRequest(uriBuilder.build());
+			}
 			deleteReq.setFormat(ODataPubFormat.ATOM);
 			deleteReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1735,8 +1971,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VMNetworks").appendKeySegment(key).select(
 							"Name,IsolationType");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -1778,8 +2017,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					new ODataPrimitiveValue.Builder().setText(machineAction.action).setType(
 							EdmSimpleType.String).build()));
 
-			final ODataEntityUpdateRequest req = ODataCUDRequestFactory.getEntityUpdateRequest(
-					uriBuilder.build(), UpdateType.REPLACE, machine);
+			final ODataEntityUpdateRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataCUDRequestFactory.getEntityUpdateRequest(uriBuilder.build(), UpdateType.REPLACE, machine);
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2026,8 +2268,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
 					.appendEntityTypeSegment("VirtualHardDisks").select("Name,Size");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2062,8 +2307,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("VirtualMachines").appendKeySegment(key)
 					.appendEntityTypeSegment("VirtualNetworkAdapters");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2090,8 +2338,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("GuestInfos").appendKeySegment(key).select(
 							"IPv4Addresses");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2120,6 +2371,10 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 				throw new BadStateException(
 						"Unable to get VM IP addresses because the VM is not running (ID="
 								+ machineId + ")", e);
+			} catch (ODataClientErrorException e) {
+				throw new BadStateException(
+						"Unable to get VM IP addresses because the VM is not running (ID="
+								+ machineId + ")", e);
 			} catch (NullPointerException e) {
 				throw new BadStateException(
 						"Unable to get VM IP addresses because the VM is not running (ID="
@@ -2139,8 +2394,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							"StampId eq guid'" + stampId + "' and VMNetworkId eq guid'" + networkId
 									+ "'").select("ID,Name,Subnet");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2170,8 +2428,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							"StampId eq guid'" + stampId
 									+ "' and NetworkVirtualizationEnabled eq true").select("ID");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2227,8 +2488,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							UUID.fromString(networkId)).build()));
 
 			// create and execute request
-			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
-					.getEntityCreateRequest(uriBuilder.build(), subnetSPF);
+			final ODataEntityCreateRequest createReq;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				createReq = ODataCUDRequestFactory.getEntityCreateRequest(uriBuilder.build(), subnetSPF);
+			}
 			createReq.setFormat(ODataPubFormat.ATOM);
 			createReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2290,8 +2554,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							.build()));
 
 			// create and execute request
-			final ODataEntityCreateRequest createReq = ODataCUDRequestFactory
-					.getEntityCreateRequest(uriBuilder.build(), ipAddressPoolConfig);
+			final ODataEntityCreateRequest createReq;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				createReq = ODataCUDRequestFactory.getEntityCreateRequest(uriBuilder.build(), ipAddressPoolConfig);
+			}
 			createReq.setFormat(ODataPubFormat.ATOM);
 			createReq.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2325,8 +2592,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("StaticIPAddressPools").appendKeySegment(key);
 
-			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
-					.build());
+			final ODataDeleteRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2352,8 +2622,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 							"StampId eq guid'" + stampId + "' and VMSubnetId eq guid'" + subnetId
 									+ "'").select("ID");
 
-			final ODataEntitySetRequest req = ODataRetrieveRequestFactory
-					.getEntitySetRequest(uriBuilder.build());
+			final ODataEntitySetRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntitySetRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2388,8 +2661,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 			final ODataURIBuilder uriBuilder = new ODataURIBuilder(serviceRootURL)
 					.appendEntityTypeSegment("VMSubnets").appendKeySegment(key);
 
-			final ODataDeleteRequest req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder
-					.build());
+			final ODataDeleteRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataCUDRequestFactory.getDeleteRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2419,8 +2695,11 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.appendEntityTypeSegment("HardwareProfiles").appendKeySegment(key).select(
 							"CPUCount,Memory");
 
-			final ODataEntityRequest req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder
-					.build());
+			final ODataEntityRequest req;
+			synchronized(lock) {
+				Configuration.setHttpClientFactory(spfFactory);
+				req = ODataRetrieveRequestFactory.getEntityRequest(uriBuilder.build());
+			}
 			req.setFormat(ODataPubFormat.ATOM);
 			req.addCustomHeader("x-ms-principal-id", principalIdHeader);
 
@@ -2438,82 +2717,6 @@ public class SPFCloudProviderConnector implements ICloudProviderConnector, IComp
 					.<Integer> toCastValue() * 1024); // MB to KB
 
 			return machineConfig;
-		}
-
-		/**
-		 * Class used to instantiate HttpClient
-		 */
-		private class SimpleHttpsClientFactory implements HttpClientFactory {
-
-			public HttpClient createHttpClient(final HttpMethod method, final URI uri) {
-				SSLContext sslContext = null;
-				try {
-					sslContext = SSLContext.getInstance("SSL");
-
-					sslContext.init(null, new TrustManager[] { new X509TrustManager() {
-						public X509Certificate[] getAcceptedIssuers() {
-							return new X509Certificate[] {};
-						}
-
-						public void checkClientTrusted(X509Certificate[] certs, String authType) {
-						}
-
-						public void checkServerTrusted(X509Certificate[] certs, String authType) {
-						}
-					} }, new SecureRandom());
-
-					SSLSocketFactory sf = new SSLSocketFactory(sslContext,
-							SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
-
-					Scheme httpsScheme = new Scheme("https", 443, sf);
-					SchemeRegistry schemeRegistry = new SchemeRegistry();
-					schemeRegistry.register(httpsScheme);
-
-					BasicClientConnectionManager cm = new BasicClientConnectionManager(
-							schemeRegistry);
-
-					DefaultHttpClient httpclient = new DefaultHttpClient(cm);
-
-					httpclient.getCredentialsProvider().setCredentials(
-							AuthScope.ANY,
-							new UsernamePasswordCredentials(cloudProviderAccount.getLogin(),
-									cloudProviderAccount.getPassword()));
-					httpclient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0);
-					return httpclient;
-
-				} catch (Exception e) {
-					e.printStackTrace();
-					return null;
-				}
-			}
-
-		}
-
-		/**
-		 * Class used to process HTTP request
-		 */
-		private static class PreemptiveAuthInterceptor implements HttpRequestInterceptor {
-
-			public void process(final HttpRequest request, final HttpContext context)
-					throws HttpException, IOException {
-				AuthState authState = (AuthState) context
-						.getAttribute(ClientContext.TARGET_AUTH_STATE);
-
-				// If no auth scheme availalble yet, try to initialize it
-				// preemptively
-				if (authState.getAuthScheme() == null) {
-					CredentialsProvider credsProvider = (CredentialsProvider) context
-							.getAttribute(ClientContext.CREDS_PROVIDER);
-					HttpHost targetHost = (HttpHost) context
-							.getAttribute(ExecutionContext.HTTP_TARGET_HOST);
-					Credentials creds = credsProvider.getCredentials(new AuthScope(targetHost
-							.getHostName(), targetHost.getPort()));
-					if (creds == null)
-						throw new HttpException("No credentials for preemptive authentication");
-					authState.update(new BasicScheme(), creds);
-				}
-			}
-
 		}
 
 	}
