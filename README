@@ -1,4 +1,4 @@
-To integrate the SPF connector in the Sirocco project:
+To integrate the SPF connector in sirocco-cloudmanager project:
 (1) create a link to this project in cloudmanager-business-module/sirocco-connector
 (2) register this connector in the module section of cloudmanager-business-module/sirocco-connector/pom.xml by referencing the link name
 That's all!
